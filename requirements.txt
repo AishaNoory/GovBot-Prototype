@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+pydantic
+python-dotenv
+chromadb
+sqlalchemy
+asyncpg
+psycopg2-binary
+sentry-sdk
+gunicorn
+minio
