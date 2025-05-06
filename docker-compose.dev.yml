@@ -16,10 +16,17 @@ services:
       - .env.dev
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres-dev:5432/govstackdb
+      - MINIO_ENDPOINT=minio-dev
+      - MINIO_PORT=9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-govstack-docs}
     depends_on:
       postgres-dev:
         condition: service_healthy
       chroma-dev:
+        condition: service_started
+      minio-dev:
         condition: service_started
     networks:
       - govstack-dev-network
@@ -34,7 +41,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: govstackdb
     volumes:
-      - postgres-dev-data:/var/lib/postgresql/data
+      - ./data/postgres-dev:/var/lib/postgresql/data
     networks:
       - govstack-dev-network
     healthcheck:
@@ -46,7 +53,7 @@ services:
   chroma-dev:
     image: chromadb/chroma:latest
     volumes:
-      - ./chroma-dev-data:/chroma/chroma
+      - ./data/chroma-dev:/chroma/chroma
       - ./server.htpasswd:/chroma/server.htpasswd:ro
     ports:
       - ${CHROMA_DEV_PORT:-8001}:8000
@@ -57,11 +64,32 @@ services:
       - govstack-dev-network
     restart: unless-stopped
 
+  minio-dev:
+    image: minio/minio:latest
+    volumes:
+      - ./data/minio-dev:/data
+    ports:
+      - "${MINIO_DEV_PORT:-9001}:9000"
+      - "${MINIO_CONSOLE_DEV_PORT:-9091}:9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
+    command: server /data --console-address ":9001"
+    networks:
+      - govstack-dev-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+
 networks:
   govstack-dev-network:
     driver: bridge
 
 volumes:
   postgres-dev-data:
-    # This creates a named volume that persists PostgreSQL data
+    driver: local
+  minio-dev-data:
     driver: local

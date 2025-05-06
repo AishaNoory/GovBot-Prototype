@@ -21,20 +21,26 @@ services:
       - CHROMA_PORT=8000  # Internal port, not the exposed port
       - SENTRY_DSN=${SENTRY_DSN:-}  # Make Sentry DSN optional
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/govstackdb
+      - MINIO_ENDPOINT=minio
+      - MINIO_PORT=9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-govstack-docs}
     networks:
       - govstack-net
     depends_on:
       - chroma
       - postgres
+      - minio
 
   postgres:
-    image: postgres:15
+    image: postgres:latest
     environment:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGRES_USER=postgres
       - POSTGRES_DB=govstackdb
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     networks:
@@ -53,7 +59,7 @@ services:
       - CHROMA_SERVER_AUTHN_CREDENTIALS_FILE=/chroma/server.htpasswd
       - CHROMA_SERVER_AUTHN_PROVIDER=chromadb.auth.basic_authn.BasicAuthenticationServerProvider
     volumes:
-      - chroma_backup:/chroma/chroma:rw
+      - ./data/chroma:/chroma/chroma:rw
       - ./server.htpasswd:/chroma/server.htpasswd:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
@@ -63,15 +69,31 @@ services:
     networks:
       - govstack-net
 
+  minio:
+    image: minio/minio:latest
+    volumes:
+      - ./data/minio:/data
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
+    command: server /data --console-address ":9001"
+    networks:
+      - govstack-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+
 volumes:
-  chroma_backup:
-    name: chroma_backup
   data:
     name: govstack_data
   storage:
     name: govstack_storage
-  postgres_data:
-    name: postgres_data
 
 networks:
   govstack-net:
