@@ -2,7 +2,7 @@
 Document storage model for database records tracking files in MinIO.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, JSON
 from sqlalchemy.ext.declarative import declarative_base
@@ -20,11 +20,11 @@ class Document(Base):
     object_name = Column(String(255), unique=True, nullable=False)
     content_type = Column(String(100), nullable=False)
     size = Column(Integer, nullable=False)
-    upload_date = Column(DateTime, default=datetime.utcnow)
+    upload_date = Column(DateTime, default=timezone.utc)
     last_accessed = Column(DateTime, nullable=True)
     description = Column(Text, nullable=True)
     is_public = Column(Boolean, default=False)
-    metadata = Column(JSON, nullable=True)
+    meta_data = Column(JSON, nullable=True)  # Renamed from 'metadata' which is reserved
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -40,5 +40,5 @@ class Document(Base):
             "last_accessed": self.last_accessed.isoformat() if self.last_accessed else None,
             "description": self.description,
             "is_public": self.is_public,
-            "metadata": self.metadata,
+            "metadata": self.meta_data,
         }
