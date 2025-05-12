@@ -346,14 +346,13 @@ async def start_crawl(
             try:
                 # Update status to running
                 crawl_tasks[task_id]["status"] = "running"
-                
-                # Start the crawl operation
+                  # Start the crawl operation
                 result = await crawl_website(
                     seed_url=str(request.url),
                     depth=request.depth,
                     concurrent_requests=request.concurrent_requests,
                     follow_external=request.follow_external,
-                    crawl_strategy=request.strategy,
+                    strategy=request.strategy,
                     session_maker=async_session,
                     task_status=crawl_tasks[task_id]
                 )

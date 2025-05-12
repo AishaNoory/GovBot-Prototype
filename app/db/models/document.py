@@ -18,10 +18,10 @@ class Document(Base):
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String(255), nullable=False)
     object_name = Column(String(255), unique=True, nullable=False)
-    content_type = Column(String(100), nullable=False)
+    content_type = Column(String(100), nullable=False)      
     size = Column(Integer, nullable=False)
-    upload_date = Column(DateTime, default=timezone.utc)
-    last_accessed = Column(DateTime, nullable=True)
+    upload_date = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    last_accessed = Column(DateTime(timezone=True), nullable=True)
     description = Column(Text, nullable=True)
     is_public = Column(Boolean, default=False)
     meta_data = Column(JSON, nullable=True)  # Renamed from 'metadata' which is reserved

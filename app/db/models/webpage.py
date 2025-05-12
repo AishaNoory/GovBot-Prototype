@@ -14,15 +14,14 @@ class Webpage(Base):
     """
     Model for tracking crawled webpages.
     """
-    __tablename__ = "webpages"
-
+    __tablename__ = "webpages"    
     id = Column(Integer, primary_key=True, index=True)
     url = Column(String(2048), unique=True, nullable=False, index=True)
     title = Column(String(512), nullable=True)
     content_hash = Column(String(64), nullable=True)  # For detecting changes
-    content_markdown = Column(Text, nullable=True)
-    last_crawled = Column(DateTime, default=timezone.utc)
-    first_crawled = Column(DateTime, default=timezone.utc)
+    content_markdown = Column(Text, nullable=True)    
+    last_crawled = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    first_crawled = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     crawl_depth = Column(Integer, default=0)
     status_code = Column(Integer, nullable=True)
     error = Column(Text, nullable=True)
@@ -44,7 +43,8 @@ class Webpage(Base):
             "title": self.title,
             "content_hash": self.content_hash,
             "last_crawled": self.last_crawled.isoformat() if self.last_crawled else None,
-            "first_crawled": self.first_crawled.isoformat() if self.first_crawled else None,            "crawl_depth": self.crawl_depth,
+            "first_crawled": self.first_crawled.isoformat() if self.first_crawled else None,            
+            "crawl_depth": self.crawl_depth,
             "status_code": self.status_code,
             "error": self.error,
             "meta_data": self.meta_data,
@@ -60,11 +60,11 @@ class WebpageLink(Base):
     __tablename__ = "webpage_links"
 
     id = Column(Integer, primary_key=True, index=True)
-    source_id = Column(Integer, ForeignKey("webpages.id"), nullable=False)
+    source_id = Column(Integer, ForeignKey("webpages.id"), nullable=False)    
     target_id = Column(Integer, ForeignKey("webpages.id"), nullable=False)
     text = Column(String(512), nullable=True)  # Anchor text
     rel = Column(String(100), nullable=True)  # Link rel attribute
-    created_at = Column(DateTime, default=timezone.utc)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     source = relationship("Webpage", foreign_keys=[source_id], back_populates="outgoing_links")

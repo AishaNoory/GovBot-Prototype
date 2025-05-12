@@ -363,13 +363,13 @@ class WebCrawler:
             result = await session.execute(query)
             webpage = result.scalars().first()
             
-            if not webpage:
+            if not webpage:                
                 logger.info(f"No existing webpage found for URL: {url}. Creating new record at depth {depth}")
                 webpage = Webpage(
                     url=url,
                     crawl_depth=depth,
                     is_seed=is_seed,
-                    first_crawled=timezone.utc
+                    first_crawled=datetime.now(timezone.utc)
                 )
                 session.add(webpage)
                 logger.debug(f"Added new webpage to session: {url}")
@@ -421,11 +421,10 @@ class WebCrawler:
         query = (
             update(Webpage)
             .where(Webpage.id == webpage_id)
-            .values(
-                title=title,
+            .values(                title=title,
                 content_hash=content_hash,
                 content_markdown=markdown_content,
-                last_crawled=timezone.utc,
+                last_crawled=datetime.now(timezone.utc),
                 status_code=status_code,
                 content_type=content_type
             )
@@ -440,9 +439,8 @@ class WebCrawler:
         query = (
             update(Webpage)
             .where(Webpage.id == webpage_id)
-            .values(
-                error=error_message,
-                last_crawled=timezone.utc
+            .values(                error=error_message,
+                last_crawled=datetime.now(timezone.utc)
             )
         )
         await session.execute(query)
@@ -990,7 +988,8 @@ def get_page_as_markdown(url: str, skip_ssl_verification: bool = False) -> str:
 
 
 async def crawl_website(seed_url: str, depth: int = 3, concurrent_requests: int = 10, 
-                        follow_external: bool = False, strategy: str = 'breadth_first') -> Dict:
+                        follow_external: bool = False, strategy: str = 'breadth_first',
+                        session_maker=None, task_status=None) -> Dict:
     """
     Crawl a website starting from a seed URL.
     
@@ -1000,6 +999,8 @@ async def crawl_website(seed_url: str, depth: int = 3, concurrent_requests: int 
         concurrent_requests: Maximum number of concurrent requests
         follow_external: Whether to follow external links
         strategy: Crawl strategy ('breadth_first' or 'depth_first')
+        session_maker: Optional SQLAlchemy session maker for database operations
+        task_status: Optional dictionary to update with crawl status
         
     Returns:
         Dictionary with crawl statistics
@@ -1012,8 +1013,25 @@ async def crawl_website(seed_url: str, depth: int = 3, concurrent_requests: int 
         'crawl_strategy': strategy
     })
     
+    # Create crawler instance
     crawler = WebCrawler(settings=settings)
-    return await crawler.crawl(seed_url, strategy=strategy)
+    
+    # If session_maker is provided, use it
+    if session_maker:
+        crawler.session_maker = session_maker
+    
+    # Start crawl
+    result = await crawler.crawl(seed_url, strategy=strategy)
+    
+    # Update task status if provided
+    if task_status and isinstance(task_status, dict):
+        task_status.update({
+            "urls_crawled": result.get("urls_crawled", 0),
+            "total_urls_queued": result.get("urls_queued", 0),
+            "errors": result.get("errors", 0)
+        })
+    
+    return result
 
 
 # Create a tool for LLamaIndex
