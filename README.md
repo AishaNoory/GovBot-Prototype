@@ -49,15 +49,12 @@ GovStack is an intelligent document management and citizen assistance system des
    - Set secure passwords for ChromaDB and MinIO
    - Enable/disable GPU acceleration with `USE_GPU=true` if available
    
-4. Create a `server.htpasswd` file for ChromaDB authentication:
+4. Set ChromaDB authentication credentials in your `.env` file:
+   - Define `CHROMA_USERNAME` and `CHROMA_PASSWORD` values
+   - Then create a `server.htpasswd` file using these credentials:
    ```bash
-   # Linux/macOS (requires htpasswd utility from apache2-utils)
-   htpasswd -bc server.htpasswd thinkAdmin thinkPassword
-   
-   # Windows (PowerShell)
-   # Note: For Windows, you can create the file manually with the format:
-   # username:hashed_password
-   # or use an online htpasswd generator
+      # Use the same username and password you set in .env
+      docker run --rm --entrypoint htpasswd httpd:2 -Bbn "$CHROMA_USERNAME" "$CHROMA_PASSWORD" > server.htpasswd
    ```
 
 ### Running in Production Mode
