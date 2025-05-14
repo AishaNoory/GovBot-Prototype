@@ -5,10 +5,14 @@ for use in Retrieval Augmented Generation (RAG) systems.
 """
 
 import logging
+import os
+import asyncio
+import nest_asyncio
 from datetime import datetime, timezone, timedelta
-from typing import List, Dict, Optional, Union, Tuple
-from sqlalchemy import select, and_
+from typing import List, Dict, Optional, Union, Tuple, Any
+from sqlalchemy import select, and_, update
 from sqlalchemy.ext.asyncio import AsyncSession
+import chromadb
 
 from app.db.models.webpage import Webpage
 
@@ -199,75 +203,282 @@ async def get_collection_stats(
         logger.error(f"Error getting collection stats: {e}")
         raise
 
-if __name__ == "__main__":
+# Apply nest_asyncio to allow nested event loops
+nest_asyncio.apply()
 
-    from llama_index.core import Document
-    from llama_index.embeddings.openai import OpenAIEmbedding
-    from llama_index.core.node_parser import SentenceSplitter, MarkdownElementNodeParser
-    from llama_index.core.extractors import TitleExtractor
-    from llama_index.core.ingestion import IngestionPipeline, IngestionCache
+from llama_index.core import Document
+from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.core.node_parser import SentenceSplitter, MarkdownElementNodeParser
+from llama_index.core.extractors import TitleExtractor
+from llama_index.core.ingestion import IngestionPipeline, IngestionCache
 
-    import chromadb
+import chromadb
 
-    from llama_index.core import VectorStoreIndex
-    from llama_index.vector_stores.chroma import ChromaVectorStore
+from llama_index.core import VectorStoreIndex, Document
+from llama_index.vector_stores.chroma import ChromaVectorStore
 
-    from llama_index.core import StorageContext
+from llama_index.core import StorageContext
 
-    from dotenv import load_dotenv
-    import asyncio
-    import os
-    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-    from sqlalchemy.orm import sessionmaker
+from dotenv import load_dotenv
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
 
-    load_dotenv()
+load_dotenv()
 
-    # Database configuration
-    DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost/govstackdb")
+# Update the DATABASE_URL directly in the code
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost/govstackdb")
+
+# This code is already present, which is good, but ensure it works correctly
+if "localhost" in DATABASE_URL and os.name == "nt":  # Windows-specific fix
+    # Replace localhost with 127.0.0.1 on Windows to avoid DNS resolution issues
+    DATABASE_URL = DATABASE_URL.replace("localhost", "127.0.0.1")
+
+try:
     engine = create_async_engine(DATABASE_URL, echo=False)
     async_session_maker = sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
     )
+except Exception as e:
+    logger.error(f"Failed to create database engine: {e}")
+    raise
 
-    remote_db = chromadb.HttpClient(
-        host="localhost",
-        port=8050
-    )
+async def get_unindexed_documents(
+    db: AsyncSession,
+    collection_id: str
+) -> List[Dict[str, str]]:
+    """
+    Get all unindexed documents for a specific collection.
+    
+    Args:
+        db: Database session
+        collection_id: The collection ID to filter by
+        
+    Returns:
+        List of dictionaries containing webpage content and metadata
+    """
+    try:
+        # Build query to get unindexed documents in this collection
+        query = select(Webpage).where(
+            and_(
+                Webpage.collection_id == collection_id,
+                Webpage.is_indexed == False,
+                Webpage.content_markdown != None
+            )
+        )
+        
+        # Execute query
+        result = await db.execute(query)
+        webpages = result.scalars().all()
+        
+        # Process results
+        texts = []
+        for webpage in webpages:
+            webpage_data = {
+                "id": webpage.id,
+                "url": webpage.url,
+                "title": webpage.title or "",
+                "content": webpage.content_markdown,
+                "last_crawled": webpage.last_crawled.isoformat() if webpage.last_crawled else None,
+            }
+            texts.append(webpage_data)
+        
+        logger.info(f"Found {len(texts)} unindexed documents in collection '{collection_id}'")
+        return texts
+    
+    except Exception as e:
+        logger.error(f"Error getting unindexed documents from collection '{collection_id}': {e}")
+        raise
 
-    chroma_collection = remote_db.get_or_create_collection(
-        name="govstack"
-    )
-
-    vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
-    storage_context = StorageContext.from_defaults(vector_store=vector_store)
-
-    # create the pipeline with transformations
-    pipeline = IngestionPipeline(
-        transformations=[
-            SentenceSplitter(chunk_size=25, chunk_overlap=0),
-            TitleExtractor(),
-            OpenAIEmbedding(),
-        ],
-        vector_store=vector_store,
-    )
-
-    async def process_documents():
-        async with async_session_maker() as db:
-            documents = await extract_texts_by_collection(
-                db=db,
-                collection_id="govstack",
-                hours_ago=None,  # Get all documents
-                include_title=True,
-                include_url=True
+async def mark_documents_as_indexed(
+    db: AsyncSession,
+    document_ids: List[int]
+) -> None:
+    """
+    Mark documents as indexed in the database.
+    
+    Args:
+        db: Database session
+        document_ids: List of document IDs to mark as indexed
+    """
+    if not document_ids:
+        return
+        
+    try:
+        now = datetime.now(timezone.utc)
+        
+        # Update documents in batches to avoid memory issues with large sets
+        batch_size = 100
+        for i in range(0, len(document_ids), batch_size):
+            batch_ids = document_ids[i:i+batch_size]
+            
+            # Use update with IN clause
+            stmt = update(Webpage).where(
+                Webpage.id.in_(batch_ids)
+            ).values(
+                is_indexed=True, 
+                indexed_at=now
             )
             
-            print(f"Extracted {len(documents)} documents for processing.")
-
-            # run the pipeline
-            nodes = pipeline.run(
-                documents=documents,
-                show_progress=True,)
+            await db.execute(stmt)
+            await db.commit()
             
-            return VectorStoreIndex(nodes)
+        logger.info(f"Marked {len(document_ids)} documents as indexed")
+    
+    except Exception as e:
+        logger.error(f"Error marking documents as indexed: {e}")
+        await db.rollback()
+        raise
 
-    index = asyncio.run(process_documents())
+async def setup_vector_store(collection_name: str):
+    """
+    Set up a vector store for document indexing.
+    
+    Args:
+        collection_name: Name for the ChromaDB collection
+        
+    Returns:
+        Tuple of (vector_store, pipeline)
+    """
+    try:
+        # Connect to ChromaDB
+        remote_db = chromadb.HttpClient(
+            host=os.getenv("CHROMA_HOST", "localhost"),
+            port=int(os.getenv("CHROMA_PORT", "8050"))
+        )
+
+        # Get or create collection
+        chroma_collection = remote_db.get_or_create_collection(
+            name=collection_name
+        )
+
+        # Set up vector store and storage context
+        vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
+        storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+        # Create the pipeline with transformations
+        pipeline = IngestionPipeline(
+            transformations=[
+                SentenceSplitter(chunk_size=1024, chunk_overlap=200),
+                OpenAIEmbedding(
+                    model="text-embedding-3-small",
+                    chunk_size=64,
+                ),
+            ],
+            vector_store=vector_store,
+        )
+        
+        return vector_store, pipeline
+    
+    except Exception as e:
+        logger.error(f"Error setting up vector store: {e}")
+        raise
+
+async def index_documents_by_collection(collection_id: str) -> Dict[str, Any]:
+    """
+    Index all unindexed documents in a collection.
+    
+    Args:
+        collection_id: The collection ID to process
+        
+    Returns:
+        Dictionary of indexing statistics
+    """
+    start_time = datetime.now(timezone.utc)
+    stats = {
+        "collection_id": collection_id,
+        "start_time": start_time.isoformat(),
+        "documents_processed": 0,
+        "documents_indexed": 0,
+        "status": "started"
+    }
+    
+    try:
+        # Connect to the database
+        async with async_session_maker() as db:
+            # Get unindexed documents
+            documents = await get_unindexed_documents(db, collection_id)
+            
+            if not documents:
+                logger.info(f"No unindexed documents found in collection '{collection_id}'")
+                stats.update({
+                    "status": "completed",
+                    "end_time": datetime.now(timezone.utc).isoformat(),
+                    "message": "No unindexed documents found"
+                })
+                return stats
+            
+            # Set up vector store
+            vector_store, pipeline = await setup_vector_store(collection_id)
+            
+            # Convert dictionary documents to Document objects
+            doc_objects = [
+                Document(
+                    text=doc.get("content", ""),
+                    metadata={
+                        "title": doc.get("title", ""),
+                        "url": doc.get("url", ""),
+                        "doc_id": doc.get("id", ""),
+                        "last_crawled": doc.get("last_crawled", "")
+                    }
+                ) for doc in documents
+            ]
+            
+            # Track document IDs for marking as indexed
+            document_ids = [doc.get("id") for doc in documents]
+            stats["documents_processed"] = len(document_ids)
+            
+            # Run the pipeline
+            nodes = pipeline.run(
+                documents=doc_objects,
+                show_progress=True,
+            )
+            
+            # Create the index
+            index = VectorStoreIndex(nodes)
+            
+            # Mark documents as indexed
+            await mark_documents_as_indexed(db, document_ids)
+            stats["documents_indexed"] = len(document_ids)
+            
+            # Update stats
+            end_time = datetime.now(timezone.utc)
+            stats.update({
+                "status": "completed",
+                "end_time": end_time.isoformat(),
+                "processing_time_seconds": (end_time - start_time).total_seconds()
+            })
+            
+            logger.info(f"Successfully indexed {len(document_ids)} documents in collection '{collection_id}'")
+            return stats
+    
+    except Exception as e:
+        logger.error(f"Error indexing documents in collection '{collection_id}': {e}")
+        stats.update({
+            "status": "failed",
+            "error": str(e),
+            "end_time": datetime.now(timezone.utc).isoformat()
+        })
+        return stats
+
+def start_background_indexing(collection_id: str) -> None:
+    """
+    Start background indexing for a collection.
+    
+    This function runs the indexing process in a background task.
+    It should be called after a crawl is completed.
+    
+    Args:
+        collection_id: The collection ID to process
+    """
+    async def _run_indexing():
+        try:
+            logger.info(f"Starting background indexing for collection '{collection_id}'")
+            result = await index_documents_by_collection(collection_id)
+            logger.info(f"Background indexing completed for collection '{collection_id}': {result['status']}")
+        except Exception as e:
+            logger.error(f"Error in background indexing for collection '{collection_id}': {e}")
+    
+    # Create and start the task
+    asyncio.create_task(_run_indexing())
+    logger.info(f"Scheduled background indexing task for collection '{collection_id}'")
+

@@ -22,7 +22,8 @@ from app.db.models.document import Document, Base as DocumentBase
 from app.db.models.webpage import Webpage, WebpageLink, Base as WebpageBase
 from app.core.crawlers.web_crawler import crawl_website
 from app.core.crawlers.utils import get_page_as_markdown
-from app.core.rag.indexer import extract_text_batch, get_collection_stats
+from app.core.rag.indexer import extract_text_batch, get_collection_stats, start_background_indexing
+from app.core.orchestrator import generate_agent
 
 # Configure logging
 logging.basicConfig(
@@ -89,6 +90,60 @@ async def root():
 async def health():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+# Chat API Models
+class ChatRequest(BaseModel):
+    """Request model for chat interactions."""
+    user_id: str = Field(..., description="Unique identifier for the user")
+    thread_id: str = Field(..., description="Identifier for the conversation thread")
+    query: str = Field(..., description="User's question or message")
+    chat_history: Optional[List[str]] = Field(default=[], description="Previous messages in the conversation")
+
+class ChatResponse(BaseModel):
+    """Response model for chat interactions."""
+    answer: str
+    sources: list
+    confidence: float
+    retriever_type: str
+    user_id: str
+    thread_id: str
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat_endpoint(request: ChatRequest):
+    """
+    Process a chat request and return an AI response.
+    
+    Args:
+        request: The chat request containing user ID, thread ID, query and optional chat history
+        
+    Returns:
+        AI-generated response with metadata
+    """
+    try:
+        # Generate the agent with chat history
+        agent = generate_agent(chat_history=request.chat_history)
+        
+        # Process the query asynchronously
+        result = await agent.run(
+            request.query,
+            chat_history=request.chat_history,
+        )
+        
+        # Create the response with user and thread IDs
+        response = ChatResponse(
+            answer=result.answer,
+            sources=result.sources,
+            confidence=result.confidence,
+            retriever_type=result.retriever_type,
+            user_id=request.user_id,
+            thread_id=request.thread_id
+        )
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error processing chat request: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing chat request: {str(e)}")
 
 # Document endpoints
 @app.post("/documents/", status_code=201)
@@ -380,14 +435,18 @@ async def start_crawl(
                     session_maker=async_session,
                     task_status=crawl_tasks[task_id]
                 )
-                
-                # Update task status on completion
+                  # Update task status on completion
                 crawl_tasks[task_id].update({
                     "status": "completed",
                     "urls_crawled": result.get("urls_crawled", 0),
                     "errors": result.get("errors", 0),
                     "finished": True
                 })
+                
+                # Start background indexing for the collection if a collection_id was provided
+                if request.collection_id:
+                    logger.info(f"Crawl completed, starting background indexing for collection '{request.collection_id}'")
+                    start_background_indexing(request.collection_id)
                 
             except Exception as e:
                 logger.error(f"Error in background crawl task: {str(e)}")
