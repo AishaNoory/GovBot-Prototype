@@ -32,7 +32,8 @@ class Webpage(Base):
     
     # Links relationship
     outgoing_links = relationship("WebpageLink", foreign_keys="WebpageLink.source_id", back_populates="source")
-    incoming_links = relationship("WebpageLink", foreign_keys="WebpageLink.target_id", back_populates="target")    def to_dict(self) -> Dict[str, Any]:
+    incoming_links = relationship("WebpageLink", foreign_keys="WebpageLink.target_id", back_populates="target")    
+    def to_dict(self) -> Dict[str, Any]:
         """
         Convert webpage model to dictionary representation.
         """

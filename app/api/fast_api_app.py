@@ -360,7 +360,8 @@ async def start_crawl(
             try:
                 # Update status to running
                 crawl_tasks[task_id]["status"] = "running"
-                  # Start the crawl operation                result = await crawl_website(
+                  # Start the crawl operation                
+                result = await crawl_website(
                     seed_url=str(request.url),
                     depth=request.depth,
                     concurrent_requests=request.concurrent_requests,
@@ -491,7 +492,7 @@ async def list_webpages(
         query = select(Webpage).offset(skip).limit(limit)
         result = await db.execute(query)
         webpages = result.scalars().all()
-          return [
+        return [
             WebpageResponse(
                 id=wp.id,
                 url=wp.url,

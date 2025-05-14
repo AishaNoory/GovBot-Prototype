@@ -1,3 +1,17 @@
+import logging
+from typing import List
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+
+from app.db.models.webpage import Webpage
+from app.api.fast_api_app import get_db, WebpageResponse # Updated imports
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+app = APIRouter() # Assuming app is an APIRouter instance
+
 @app.get("/webpages/collection/{collection_id}", response_model=List[WebpageResponse])
 async def get_webpages_by_collection(
     collection_id: str,

@@ -203,9 +203,28 @@ async def get_collection_stats(
 
 from llama_index.core import Document
 from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.core.node_parser import SentenceSplitter, 
+from llama_index.core.node_parser import SentenceSplitter, MarkdownElementNodeParser
 from llama_index.core.extractors import TitleExtractor
 from llama_index.core.ingestion import IngestionPipeline, IngestionCache
+
+import chromadb
+
+from llama_index.core import VectorStoreIndex
+from llama_index.vector_stores.chroma import ChromaVectorStore
+
+from llama_index.core import StorageContext
+
+remote_db = chromadb.HttpClient(
+    host="localhost",
+    port=8000
+)
+
+chroma_collection = remote_db.get_or_create_collection(
+    name="govstack"
+)
+
+vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
+storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
 # create the pipeline with transformations
 pipeline = IngestionPipeline(
@@ -213,11 +232,23 @@ pipeline = IngestionPipeline(
         SentenceSplitter(chunk_size=25, chunk_overlap=0),
         TitleExtractor(),
         OpenAIEmbedding(),
-    ]
+    ],
+    vector_store=vector_store,
 )
 
-# run the pipeline
-nodes = pipeline.run(documents=[Document.example()])
+async def process_documents():
+    documents = await extract_texts_by_collection(
+        db=AsyncSession(),
+        collection_id="govstack",
+        hours_ago=24,
+        include_title=True,
+        include_url=True
+    )
 
+    # run the pipeline
+    nodes = pipeline.run(documents=documents)
+    
+    return VectorStoreIndex(nodes)
 
-index = VectorStoreIndex(nodes)
+# Execute the async function
+index = process_documents()

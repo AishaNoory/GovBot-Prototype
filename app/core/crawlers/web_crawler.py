@@ -308,7 +308,7 @@ class WebCrawler:
     """
     Advanced web crawler with configurable settings.
     """
-      def __init__(self, settings=None, engine=None, collection_id=None):
+    def __init__(self, settings=None, engine=None, collection_id=None):
         """
         Initialize the web crawler.
         
@@ -364,7 +364,8 @@ class WebCrawler:
             webpage = result.scalars().first()
             
             if not webpage:                
-                logger.info(f"No existing webpage found for URL: {url}. Creating new record at depth {depth}")                webpage = Webpage(
+                logger.info(f"No existing webpage found for URL: {url}. Creating new record at depth {depth}")                
+                webpage = Webpage(
                     url=url,
                     crawl_depth=depth,
                     is_seed=is_seed,
