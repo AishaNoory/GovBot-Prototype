@@ -13,10 +13,9 @@ collection_dict = {
 }
 
 remote_db = chromadb.HttpClient(
-    host="localhost",
-    port=8050
+    host=os.getenv("CHROMA_HOST", "localhost"),
+    port=int(os.getenv("CHROMA_PORT", "8050"))
 )
-
 
 retrievers = []
 for collection_name, entry  in collection_dict.items():
