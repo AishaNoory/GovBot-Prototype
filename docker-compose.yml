@@ -26,6 +26,7 @@ services:
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
       - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-govstack-docs}
+      - USE_UVLOOP=${USE_UVLOOP:-false}  # Control uvloop usage
     networks:
       - govstack-net
     depends_on:
