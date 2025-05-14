@@ -1,5 +1,5 @@
 # Use an official Python runtime as a parent image
-FROM python:3.11.12-bullseye
+FROM python:3.11.12-bookworm
 
 # Set the working directory in the container to /app
 WORKDIR /app
@@ -27,4 +27,8 @@ COPY ./app /app/app
 # Make port 5000 available to the world outside this container
 EXPOSE 5000
 
-CMD ["uvicorn", "app.api.fast_api_app:app", "--host", "0.0.0.0", "--port", "5000"]
+# Set environment variable defaults
+ENV USE_UVLOOP=false
+
+# Command to run the application
+CMD ["uvicorn", "app.api.fast_api_app:app", "--host", "0.0.0.0", "--port", "5000", "--loop", "asyncio", "--http", "httptools"]

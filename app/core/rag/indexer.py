@@ -7,10 +7,9 @@ for use in Retrieval Augmented Generation (RAG) systems.
 import logging
 import os
 import asyncio
-import nest_asyncio
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Optional, Union, Tuple, Any
-from sqlalchemy import select, and_, update
+from sqlalchemy import select, and_, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 import chromadb
 
@@ -146,11 +145,21 @@ async def get_collection_stats(
         Dictionary of collection statistics
     """
     try:
+        # First check if the is_indexed column exists to avoid errors
+        column_exists = await _check_column_exists(db, "webpages", "is_indexed")
+        if not column_exists:
+            logger.warning("Column 'is_indexed' doesn't exist in webpages table. Run scripts/add_indexing_columns.py to add it.")
+        
         if collection_id:
             # Stats for a specific collection
-            query = select(Webpage).where(Webpage.collection_id == collection_id)
+            # Use a simpler query that doesn't rely on potentially missing columns
+            query = select(Webpage.id, Webpage.url, Webpage.title, 
+                          Webpage.content_markdown, Webpage.first_crawled, 
+                          Webpage.last_crawled).\
+                   where(Webpage.collection_id == collection_id)
+            
             result = await db.execute(query)
-            webpages = result.scalars().all()
+            webpages = result.fetchall()
             
             # Find earliest and latest crawl dates
             earliest_crawl = None
@@ -158,6 +167,7 @@ async def get_collection_stats(
             total_characters = 0
             
             for webpage in webpages:
+                # Use dictionary-like access for the result rows
                 if webpage.content_markdown:
                     total_characters += len(webpage.content_markdown)
                 
@@ -169,29 +179,46 @@ async def get_collection_stats(
                     if latest_crawl is None or webpage.last_crawled > latest_crawl:
                         latest_crawl = webpage.last_crawled
             
-            return {
+            stats = {
                 "collection_id": collection_id,
                 "webpage_count": len(webpages),
                 "total_characters": total_characters,
                 "earliest_crawl": earliest_crawl.isoformat() if earliest_crawl else None,
                 "latest_crawl": latest_crawl.isoformat() if latest_crawl else None
             }
+            
+            # Add indexing stats only if the column exists
+            if column_exists:
+                # We'd need another query to get indexing stats
+                index_query = select(
+                    func.count(Webpage.id).filter(Webpage.is_indexed == True).label("indexed_count"),
+                    func.count(Webpage.id).filter(Webpage.is_indexed == False).label("unindexed_count")
+                ).where(Webpage.collection_id == collection_id)
+                
+                index_result = await db.execute(index_query)
+                index_stats = index_result.first()
+                
+                if index_stats:
+                    stats["indexed_count"] = index_stats.indexed_count or 0
+                    stats["unindexed_count"] = index_stats.unindexed_count or 0
+                    if (stats["indexed_count"] + stats["unindexed_count"]) > 0:
+                        stats["indexing_progress"] = f"{(stats['indexed_count'] / (stats['indexed_count'] + stats['unindexed_count']) * 100):.1f}%"
+            
+            return stats
         else:
             # Stats for all collections
-            from sqlalchemy import func
-            
-            # Get distinct collection IDs
+            # Use a query that doesn't rely on potentially missing columns
             query = select(Webpage.collection_id, func.count(Webpage.id).label("count")).\
                 group_by(Webpage.collection_id)
             result = await db.execute(query)
             collections = result.fetchall()
             
             collection_stats = []
-            for coll_id, count in collections:
-                if coll_id:  # Skip None values
+            for row in collections:
+                if row.collection_id:  # Skip None values
                     collection_stats.append({
-                        "collection_id": coll_id,
-                        "webpage_count": count
+                        "collection_id": row.collection_id,
+                        "webpage_count": row.count
                     })
             
             return {
@@ -203,8 +230,44 @@ async def get_collection_stats(
         logger.error(f"Error getting collection stats: {e}")
         raise
 
-# Apply nest_asyncio to allow nested event loops
-nest_asyncio.apply()
+async def _check_column_exists(db: AsyncSession, table_name: str, column_name: str) -> bool:
+    """
+    Check if a column exists in a table.
+    
+    Args:
+        db: Database session
+        table_name: Name of the table
+        column_name: Name of the column
+        
+    Returns:
+        True if the column exists, False otherwise
+    """
+    try:
+        # Execute raw SQL to check if the column exists
+        query = """
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = :table_name AND column_name = :column_name
+        );
+        """
+        result = await db.execute(query, {"table_name": table_name, "column_name": column_name})
+        exists = result.scalar()
+        return exists
+    except Exception as e:
+        logger.warning(f"Error checking if column {column_name} exists in {table_name}: {e}")
+        return False
+
+# Check if uvloop is in use - if so, don't apply nest_asyncio
+if os.getenv("USE_UVLOOP", "false").lower() != "true":
+    import nest_asyncio
+    try:
+        nest_asyncio.apply()
+    except ValueError as e:
+        # If we're using uvloop, this will fail, and that's expected
+        # We'll log the error but continue execution
+        logging.getLogger(__name__).warning(f"Could not apply nest_asyncio: {e}")
+        logging.getLogger(__name__).warning("This is normal if using uvloop. Set USE_UVLOOP=false to use nest_asyncio.")
 
 from llama_index.core import Document
 from llama_index.embeddings.openai import OpenAIEmbedding

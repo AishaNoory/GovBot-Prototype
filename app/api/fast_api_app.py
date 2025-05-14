@@ -4,7 +4,7 @@ FastAPI application for the GovStack service.
 
 import os
 import logging
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone, timedelta
 import uuid
@@ -81,12 +81,50 @@ async def get_db():
     finally:
         await db.close()
 
-@app.get("/")
+# Create APIRouters for different endpoint categories
+core_router = APIRouter(
+    prefix="",
+    tags=["Core"],
+    responses={404: {"description": "Not found"}},
+)
+
+chat_router = APIRouter(
+    prefix="/chat",
+    tags=["Chat"],
+    responses={404: {"description": "Not found"}},
+)
+
+document_router = APIRouter(
+    prefix="/documents",
+    tags=["Documents"],
+    responses={404: {"description": "Not found"}},
+)
+
+crawler_router = APIRouter(
+    prefix="/crawl",
+    tags=["Web Crawler"],
+    responses={404: {"description": "Not found"}},
+)
+
+webpage_router = APIRouter(
+    prefix="/webpages",
+    tags=["Webpages"],
+    responses={404: {"description": "Not found"}},
+)
+
+collection_router = APIRouter(
+    prefix="/collection-stats",
+    tags=["Collections"],
+    responses={404: {"description": "Not found"}},
+)
+
+# Core endpoints
+@core_router.get("/")
 async def root():
     """Root endpoint."""
     return {"message": "Welcome to GovStack API"}
 
-@app.get("/health")
+@core_router.get("/health")
 async def health():
     """Health check endpoint."""
     return {"status": "healthy"}
@@ -108,7 +146,7 @@ class ChatResponse(BaseModel):
     user_id: str
     thread_id: str
 
-@app.post("/chat", response_model=ChatResponse)
+@chat_router.post("", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
     """
     Process a chat request and return an AI response.
@@ -146,12 +184,12 @@ async def chat_endpoint(request: ChatRequest):
         raise HTTPException(status_code=500, detail=f"Error processing chat request: {str(e)}")
 
 # Document endpoints
-@app.post("/documents/", status_code=201)
+@document_router.post("/", status_code=201)
 async def upload_document(
     file: UploadFile = File(...),
     description: str = Form(None),
     is_public: bool = Form(False),
-    collection_id: Optional[str] = Form(None),  # Add collection_id parameter
+    collection_id: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -218,7 +256,7 @@ async def upload_document(
         logger.error(f"Error uploading document: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error uploading document: {str(e)}")
 
-@app.get("/documents/{document_id}")
+@document_router.get("/{document_id}")
 async def get_document(
     document_id: int,
     db: AsyncSession = Depends(get_db)
@@ -258,7 +296,7 @@ async def get_document(
         logger.error(f"Error retrieving document: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error retrieving document: {str(e)}")
 
-@app.get("/documents/")
+@document_router.get("/")
 async def list_documents(
     skip: int = 0,
     limit: int = 100,
@@ -290,7 +328,7 @@ async def list_documents(
         logger.error(f"Error listing documents: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error listing documents: {str(e)}")
 
-@app.delete("/documents/{document_id}")
+@document_router.delete("/{document_id}")
 async def delete_document(
     document_id: int,
     db: AsyncSession = Depends(get_db)
@@ -387,7 +425,7 @@ class CollectionTextRequest(BaseModel):
 crawl_tasks = {}
 
 # Web Crawler Endpoints
-@app.post("/crawl/", response_model=CrawlStatusResponse)
+@crawler_router.post("/", response_model=CrawlStatusResponse)
 async def start_crawl(
     request: CrawlWebsiteRequest,
     background_tasks: BackgroundTasks,
@@ -407,7 +445,7 @@ async def start_crawl(
     try:
         # Generate a unique task ID
         task_id = str(uuid.uuid4())
-          # Initialize task status
+        # Initialize task status
         crawl_tasks[task_id] = {
             "status": "starting",
             "seed_urls": [str(request.url)],
@@ -424,7 +462,7 @@ async def start_crawl(
             try:
                 # Update status to running
                 crawl_tasks[task_id]["status"] = "running"
-                  # Start the crawl operation                
+                # Start the crawl operation                
                 result = await crawl_website(
                     seed_url=str(request.url),
                     depth=request.depth,
@@ -435,7 +473,7 @@ async def start_crawl(
                     session_maker=async_session,
                     task_status=crawl_tasks[task_id]
                 )
-                  # Update task status on completion
+                # Update task status on completion
                 crawl_tasks[task_id].update({
                     "status": "completed",
                     "urls_crawled": result.get("urls_crawled", 0),
@@ -466,14 +504,14 @@ async def start_crawl(
             seed_urls=crawl_tasks[task_id]["seed_urls"],
             start_time=crawl_tasks[task_id]["start_time"],
             finished=False,
-            collection_id=request.collection_id  # Add this line to include collection_id in the response
+            collection_id=request.collection_id
         )
         
     except Exception as e:
         logger.error(f"Error starting crawl: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error starting crawl: {str(e)}")
 
-@app.get("/crawl/{task_id}", response_model=CrawlStatusResponse)
+@crawler_router.get("/{task_id}", response_model=CrawlStatusResponse)
 async def get_crawl_status(task_id: str):
     """
     Get the status of a crawl operation.
@@ -508,10 +546,10 @@ async def get_crawl_status(task_id: str):
         errors=task_status.get("errors"),
         start_time=task_status.get("start_time"),
         finished=task_status.get("finished", False),
-        collection_id=task_status.get("collection_id")  # Add this line to include collection_id in the response
+        collection_id=task_status.get("collection_id")
     )
 
-@app.post("/fetch-webpage/", response_model=WebpageFetchResponse)
+@webpage_router.post("/fetch-webpage/", response_model=WebpageFetchResponse)
 async def fetch_webpage(request: FetchWebpageRequest):
     """
     Fetch a single webpage and convert it to markdown.
@@ -541,7 +579,7 @@ async def fetch_webpage(request: FetchWebpageRequest):
         logger.error(f"Error fetching webpage: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching webpage: {str(e)}")
 
-@app.get("/webpages/", response_model=List[WebpageResponse])
+@webpage_router.get("/", response_model=List[WebpageResponse])
 async def list_webpages(
     skip: int = 0,
     limit: int = 50,
@@ -579,7 +617,7 @@ async def list_webpages(
         logger.error(f"Error listing webpages: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error listing webpages: {str(e)}")
 
-@app.get("/webpages/{webpage_id}", response_model=Dict[str, Any])
+@webpage_router.get("/{webpage_id}", response_model=Dict[str, Any])
 async def get_webpage(
     webpage_id: int,
     include_content: bool = True,
@@ -635,8 +673,7 @@ async def get_webpage(
         logger.error(f"Error retrieving webpage: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error retrieving webpage: {str(e)}")
 
-# Get webpages by collection_id
-@app.get("/webpages/collection/{collection_id}", response_model=List[WebpageResponse])
+@webpage_router.get("/collection/{collection_id}", response_model=List[WebpageResponse])
 async def get_webpages_by_collection(
     collection_id: str,
     limit: int = Query(100, ge=1, le=1000),
@@ -673,8 +710,7 @@ async def get_webpages_by_collection(
         logger.error(f"Error fetching webpages by collection: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching webpages: {str(e)}")
 
-# Get a webpage by URL
-@app.get("/webpages/by-url/", response_model=WebpageResponse)
+@webpage_router.get("/by-url/", response_model=WebpageResponse)
 async def get_webpage_by_url(
     url: str = Query(..., description="The URL of the webpage to fetch"),
     db: AsyncSession = Depends(get_db)
@@ -712,7 +748,7 @@ async def get_webpage_by_url(
         logger.error(f"Error fetching webpage by URL: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching webpage: {str(e)}")
 
-@app.post("/extract-texts/", response_model=Union[str, List[Dict[str, Any]]])
+@webpage_router.post("/extract-texts/", response_model=Union[str, List[Dict[str, Any]]])
 async def extract_texts_from_collection(
     request: CollectionTextRequest,
     db: AsyncSession = Depends(get_db)
@@ -739,7 +775,7 @@ async def extract_texts_from_collection(
         logger.error(f"Error extracting texts: {e}")
         raise HTTPException(status_code=500, detail=f"Error extracting texts: {str(e)}")
 
-@app.get("/collection-stats/{collection_id}", response_model=Dict[str, Any])
+@collection_router.get("/{collection_id}", response_model=Dict[str, Any])
 async def get_collection_statistics(
     collection_id: str,
     db: AsyncSession = Depends(get_db)
@@ -756,12 +792,16 @@ async def get_collection_statistics(
     """
     try:
         stats = await get_collection_stats(db=db, collection_id=collection_id)
+        if "indexed_count" not in stats:
+            # Add a message to the response if indexing columns are missing
+            stats["indexing_status"] = "not_available"
+            stats["indexing_message"] = "Indexing columns not found in database. Run scripts/add_indexing_columns.py to add them."
         return stats
     except Exception as e:
         logger.error(f"Error getting collection stats: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting collection stats: {str(e)}")
 
-@app.get("/collection-stats/", response_model=Dict[str, Any])
+@collection_router.get("/", response_model=Dict[str, Any])
 async def get_all_collection_statistics(
     db: AsyncSession = Depends(get_db)
 ):
@@ -776,10 +816,36 @@ async def get_all_collection_statistics(
     """
     try:
         stats = await get_collection_stats(db=db)
+        # Add a note about running the migration script if needed
+        stats["note"] = "For indexing statistics, ensure you've run scripts/add_indexing_columns.py"
         return stats
     except Exception as e:
         logger.error(f"Error getting collection stats: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting collection stats: {str(e)}")
 
+# Register all routers with the main app
+app.include_router(core_router)
+app.include_router(chat_router)
+app.include_router(document_router)
+app.include_router(crawler_router)
+app.include_router(webpage_router)
+app.include_router(collection_router)
+
 if __name__ == "__main__":
-    uvicorn.run("fast_api_app:app", host="0.0.0.0", port=5000, reload=True)
+    import os
+    
+    # Check if we should use uvloop
+    use_uvloop = os.getenv("USE_UVLOOP", "false").lower() == "true"
+    
+    if use_uvloop:
+        uvicorn.run("fast_api_app:app", host="0.0.0.0", port=5000, reload=True)
+    else:
+        # Disable uvloop when running directly
+        uvicorn.run(
+            "fast_api_app:app", 
+            host="0.0.0.0", 
+            port=5000, 
+            reload=True,
+            loop="asyncio",  # Use standard asyncio instead of uvloop
+            http="httptools"  # Use httptools to maintain performance
+        )
