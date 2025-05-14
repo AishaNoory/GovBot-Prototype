@@ -57,6 +57,7 @@ if __name__ == "__main__":
         "What is the role of the Kenya Film Commission in the film industry?",
         chat_history=[],
     )
+    result.output
 
     # Run the agent with a sample query using an asynchronous method
     # result = await agent.run(

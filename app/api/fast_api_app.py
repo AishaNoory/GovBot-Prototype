@@ -169,10 +169,10 @@ async def chat_endpoint(request: ChatRequest):
         
         # Create the response with user and thread IDs
         response = ChatResponse(
-            answer=result.answer,
-            sources=result.sources,
-            confidence=result.confidence,
-            retriever_type=result.retriever_type,
+            answer=result.output.answer,
+            sources=result.output.sources,
+            confidence=result.output.confidence,
+            retriever_type=result.output.retriever_type,
             user_id=request.user_id,
             thread_id=request.thread_id
         )
