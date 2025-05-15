@@ -24,6 +24,7 @@ router = APIRouter()
 # Pydantic models for request and response
 class ChatRequest(BaseModel):
     message: str
+    session_id: Optional[str] = None  # Session ID can be provided by frontend
     user_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
@@ -46,91 +47,49 @@ class ChatHistoryResponse(BaseModel):
 
 
 @router.post("/", response_model=ChatResponse)
-async def create_chat(
+async def process_chat(
     request: ChatRequest,
     db: AsyncSession = Depends(get_db)
 ) -> ChatResponse:
     """
-    Create a new chat session and process the initial message.
+    Process a chat message, creating a new session if needed or continuing an existing one.
     
     Args:
-        request: The chat request containing the message and optional user data
+        request: The chat request containing the message, session_id (if continuing), and user data
         db: Database session
         
     Returns:
         Chat response containing the session ID and agent output
     """
     trace_id = str(uuid.uuid4())  # Generate a unique trace ID for logging
-    logger.info(f"[{trace_id}] Creating new chat session for user: {request.user_id}")
+    session_id = request.session_id
     
-    try:
+    # New conversation (no session_id provided) or continuing conversation
+    is_new_session = not session_id
+    
+    if is_new_session:
+        logger.info(f"[{trace_id}] Creating new chat session for user: {request.user_id}")
         # Create a new chat session
         session_id = await ChatPersistenceService.create_chat_session(db, request.user_id)
-        
-        # Generate agent and process the message
-        agent = generate_agent()
-        start_time = datetime.now()
-        result = agent.run_sync(request.message)
-        processing_time = (datetime.now() - start_time).total_seconds()
-        
-        logger.info(f"[{trace_id}] Processed message in {processing_time:.2f} seconds")
-        
-        # Save the messages to the database
-        success = await ChatPersistenceService.save_messages(db, session_id, result.all_messages())
-        if not success:
-            logger.error(f"[{trace_id}] Failed to save chat messages for session: {session_id}")
-            raise HTTPException(status_code=500, detail="Failed to save chat messages")
-        
-        # Return the response
-        return ChatResponse(
-            session_id=session_id,
-            answer=result.output.answer,
-            sources=result.output.sources,
-            confidence=result.output.confidence,
-            retriever_type=result.output.retriever_type,
-            trace_id=trace_id
-        )
-    
-    except Exception as e:
-        logger.error(f"[{trace_id}] Error creating chat: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-
-@router.post("/{session_id}", response_model=ChatResponse)
-async def continue_chat(
-    session_id: str = Path(..., description="The ID of the chat session to continue"),
-    request: ChatRequest = Body(...),
-    db: AsyncSession = Depends(get_db)
-) -> ChatResponse:
-    """
-    Continue an existing chat session with a new message.
-    
-    Args:
-        session_id: The ID of the chat session to continue
-        request: The chat request containing the message
-        db: Database session
-        
-    Returns:
-        Chat response containing the agent output
-    """
-    trace_id = str(uuid.uuid4())  # Generate a unique trace ID for logging
-    logger.info(f"[{trace_id}] Continuing chat session: {session_id}")
-    
-    try:
+        message_history = None
+    else:
+        logger.info(f"[{trace_id}] Continuing chat session: {session_id}")
         # Check if the chat session exists
         chat = await ChatPersistenceService.get_chat_by_session_id(db, session_id)
         if not chat:
-            logger.warning(f"[{trace_id}] Chat session {session_id} not found")
-            raise HTTPException(status_code=404, detail=f"Chat session {session_id} not found")
-        
-        # Load the previous messages
-        message_history = await ChatPersistenceService.load_messages(db, session_id)
-        
+            # If provided session_id doesn't exist, create it instead of failing
+            logger.warning(f"[{trace_id}] Chat session {session_id} not found, creating new session")
+            chat = await ChatPersistenceService.create_chat_session_with_id(db, session_id, request.user_id)
+            message_history = None
+        else:
+            # Load the previous messages
+            message_history = await ChatPersistenceService.load_messages(db, session_id)
+    
+    try:
         start_time = datetime.now()
         
         if not message_history:
-            # If no messages found, start a new conversation
-            logger.info(f"[{trace_id}] No previous messages found for session {session_id}, starting fresh")
+            # If no messages found or new session, start a new conversation
             agent = generate_agent()
         else:
             # Continue the conversation with previous context
@@ -150,11 +109,15 @@ async def continue_chat(
         
         logger.info(f"[{trace_id}] Processed message in {processing_time:.2f} seconds")
         
-        # Save the new messages to the database
-        # We only save the new messages to avoid duplicating existing ones
-        success = await ChatPersistenceService.save_messages(db, session_id, result.new_messages())
+        # Save the messages to the database
+        if is_new_session:
+            success = await ChatPersistenceService.save_messages(db, session_id, result.all_messages())
+        else:
+            # Only save new messages for existing sessions to avoid duplication
+            success = await ChatPersistenceService.save_messages(db, session_id, result.new_messages())
+            
         if not success:
-            logger.error(f"[{trace_id}] Failed to save new messages for session: {session_id}")
+            logger.error(f"[{trace_id}] Failed to save chat messages for session: {session_id}")
             raise HTTPException(status_code=500, detail="Failed to save chat messages")
         
         # Return the response
@@ -170,7 +133,7 @@ async def continue_chat(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[{trace_id}] Error continuing chat: {str(e)}", exc_info=True)
+        logger.error(f"[{trace_id}] Error processing chat: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 

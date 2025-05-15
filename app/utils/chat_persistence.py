@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 class ChatPersistenceService:
     """Service for storing and retrieving chat history."""
-
     @staticmethod
     async def create_chat_session(db: AsyncSession, user_id: Optional[str] = None) -> str:
         """
@@ -48,6 +47,62 @@ class ChatPersistenceService:
         await db.refresh(chat)
         
         logger.info(f"Created new chat session with ID: {session_id}")
+        return session_id
+        
+    @staticmethod
+    async def create_chat_session_with_id(db: AsyncSession, session_id: str, user_id: Optional[str] = None) -> str:
+        """
+        Create a new chat session with a specific session ID.
+        
+        Args:
+            db: Database session
+            session_id: The session ID to use
+            user_id: Optional user identifier
+            
+        Returns:
+            The session ID that was provided
+        """
+        # Create chat record with the provided session ID
+        chat = Chat(
+            session_id=session_id,
+            user_id=user_id,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc)
+        )
+        
+        db.add(chat)
+        await db.commit()
+        await db.refresh(chat)
+        
+        logger.info(f"Created new chat session with provided ID: {session_id}")
+        return session_id
+
+    @staticmethod
+    async def create_chat_session_with_id(db: AsyncSession, session_id: str, user_id: Optional[str] = None) -> str:
+        """
+        Create a new chat session with a specific session ID.
+        
+        Args:
+            db: Database session
+            session_id: The session ID to use
+            user_id: Optional user identifier
+            
+        Returns:
+            The session ID that was provided
+        """
+        # Create chat record with the provided session ID
+        chat = Chat(
+            session_id=session_id,
+            user_id=user_id,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc)
+        )
+        
+        db.add(chat)
+        await db.commit()
+        await db.refresh(chat)
+        
+        logger.info(f"Created new chat session with provided ID: {session_id}")
         return session_id
 
     @staticmethod
@@ -145,7 +200,8 @@ class ChatPersistenceService:
         except Exception as e:
             logger.error(f"Error saving messages: {str(e)}")
             await db.rollback()
-            return False    @staticmethod
+            return False    
+    @staticmethod
     async def load_messages(db: AsyncSession, session_id: str) -> Optional[List]:
         """
         Load messages for a chat session.

@@ -827,14 +827,15 @@ async def get_all_collection_statistics(
 
 # Register all routers with the main app
 app.include_router(core_router)
-app.include_router(chat_router)
+# Import the persistent chat endpoints as the main chat router
+from app.api.endpoints.chat_endpoints import router as persistent_chat_router
+app.include_router(persistent_chat_router, prefix="/chat", tags=["Chat"])
 app.include_router(document_router)
 app.include_router(crawler_router)
 app.include_router(webpage_router)
 app.include_router(collection_router)
 
-# Import and include the new persistent chat endpoints
-from app.api.endpoints.chat_endpoints import router as persistent_chat_router
+# Also include the router under the v2 prefix for backward compatibility
 app.include_router(persistent_chat_router, prefix="/v2/chat", tags=["Chat V2"])
 
 if __name__ == "__main__":
