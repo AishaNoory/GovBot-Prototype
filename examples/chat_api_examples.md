@@ -7,6 +7,8 @@ This document provides examples of how to use the GovStack Chat API endpoints.
 The Chat API endpoint is available at:
 - `/chat`
 
+This endpoint provides all chat functionality including creating new conversations, continuing existing conversations, and handling message history automatically.
+
 ## Starting a New Conversation
 
 To start a new conversation, send a POST request to the chat endpoint without providing a `session_id`. The API will create a new session and return the session ID in the response.
@@ -174,7 +176,7 @@ DELETE /chat/5f9b5b7e-8f0c-4a3c-9d8f-5f9b5b7e8f0c
 
 ## Including Optional Metadata
 
-You can include additional metadata with your chat requests to provide more context.
+You can include additional metadata with your chat requests to provide more context. This metadata is stored with the chat session and can be used for tracking, analytics, or other purposes.
 
 ### Request
 
@@ -216,4 +218,5 @@ Content-Type: application/json
 
 - If you provide a `session_id` that doesn't exist, the system will create a new session with that ID instead of returning an error.
 - Chat history is saved automatically for all conversations.
-- The system truncates message history if it gets too long to avoid token limits.
+- The system truncates message history if it gets too long (over 20 messages) to avoid token limits.
+- The chat endpoint also supports metadata for additional context that can be useful for tracking or analytics.
