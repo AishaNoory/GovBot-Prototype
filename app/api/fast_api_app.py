@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 from app.utils.storage import minio_client
 from app.db.models.document import Document, Base as DocumentBase
 from app.db.models.webpage import Webpage, WebpageLink, Base as WebpageBase
+from app.db.models.chat import Chat, ChatMessage, Base as ChatBase
 from app.core.crawlers.web_crawler import crawl_website
 from app.core.crawlers.utils import get_page_as_markdown
 from app.core.rag.indexer import extract_text_batch, get_collection_stats, start_background_indexing
@@ -51,6 +52,7 @@ async def lifespan(app: FastAPI):
         # Create tables if they don't exist
         await conn.run_sync(DocumentBase.metadata.create_all)
         await conn.run_sync(WebpageBase.metadata.create_all)
+        await conn.run_sync(ChatBase.metadata.create_all)
     yield
     # Shutdown logic
     logger.info("Shutting down GovStack API")
@@ -88,11 +90,7 @@ core_router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
-chat_router = APIRouter(
-    prefix="/chat",
-    tags=["Chat"],
-    responses={404: {"description": "Not found"}},
-)
+# chat_router removed as we use the persistent_chat_router directly
 
 document_router = APIRouter(
     prefix="/documents",
@@ -129,59 +127,7 @@ async def health():
     """Health check endpoint."""
     return {"status": "healthy"}
 
-# Chat API Models
-class ChatRequest(BaseModel):
-    """Request model for chat interactions."""
-    user_id: str = Field(..., description="Unique identifier for the user")
-    thread_id: str = Field(..., description="Identifier for the conversation thread")
-    query: str = Field(..., description="User's question or message")
-    chat_history: Optional[List[str]] = Field(default=[], description="Previous messages in the conversation")
-
-class ChatResponse(BaseModel):
-    """Response model for chat interactions."""
-    answer: str
-    sources: list
-    confidence: float
-    retriever_type: str
-    user_id: str
-    thread_id: str
-
-@chat_router.post("", response_model=ChatResponse)
-async def chat_endpoint(request: ChatRequest):
-    """
-    Process a chat request and return an AI response.
-    
-    Args:
-        request: The chat request containing user ID, thread ID, query and optional chat history
-        
-    Returns:
-        AI-generated response with metadata
-    """
-    try:
-        # Generate the agent with chat history
-        agent = generate_agent(chat_history=request.chat_history)
-        
-        # Process the query asynchronously
-        result = await agent.run(
-            request.query,
-            chat_history=request.chat_history,
-        )
-        
-        # Create the response with user and thread IDs
-        response = ChatResponse(
-            answer=result.output.answer,
-            sources=result.output.sources,
-            confidence=result.output.confidence,
-            retriever_type=result.output.retriever_type,
-            user_id=request.user_id,
-            thread_id=request.thread_id
-        )
-        
-        return response
-        
-    except Exception as e:
-        logger.error(f"Error processing chat request: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing chat request: {str(e)}")
+# Chat models are now defined in the chat_endpoints.py module
 
 # Document endpoints
 @document_router.post("/", status_code=201)
@@ -825,7 +771,9 @@ async def get_all_collection_statistics(
 
 # Register all routers with the main app
 app.include_router(core_router)
-app.include_router(chat_router)
+# Import the chat endpoints router
+from app.api.endpoints.chat_endpoints import router as chat_router
+app.include_router(chat_router, prefix="/chat", tags=["Chat"])
 app.include_router(document_router)
 app.include_router(crawler_router)
 app.include_router(webpage_router)
