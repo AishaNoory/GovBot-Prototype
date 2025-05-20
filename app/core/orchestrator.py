@@ -1,5 +1,5 @@
 from app.utils.prompts import SYSTEM_PROMPT
-from app.core.rag.tool_loader import retrievers
+from app.core.rag.tool_loader import tools
 from llama_index.core import Settings
 from pydantic_ai import Agent
 from llama_index.llms.openai import OpenAI
@@ -36,7 +36,7 @@ def generate_agent() -> Agent:
     agent = Agent(
         'openai:gpt-4o',
         instructions=SYSTEM_PROMPT,  
-        tools=retrievers,
+        tools=tools,
         verbose=True,
         output_type=Output
     )
