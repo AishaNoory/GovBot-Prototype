@@ -18,6 +18,8 @@ from dotenv import load_dotenv
 from opentelemetry.instrumentation.llamaindex import LlamaIndexInstrumentor
 LlamaIndexInstrumentor().instrument()
 
+from llama_index.embeddings.openai import OpenAIEmbedding
+
 load_dotenv()
 
 
@@ -29,6 +31,14 @@ collection_dict: Dict[str, Dict[str, str]] = {
     "kfcb":{
         "collection_name": "Kenya Film Classification Board",
         "collection_description": "The Kenya Film Classification Board (KFCB) is a government agency responsible for regulating the film and broadcast industry in Kenya. It ensures that films and broadcasts comply with the law, promotes local content, and protects children from harmful content.",
+    },
+    "brs":{
+        "collection_name": "Business Registration Service",
+        "collection_description": "The Business Registration Service (BRS) is a government agency responsible for registering and regulating businesses in Kenya. It provides services such as business name registration, company registration, and issuance of certificates.",
+    },
+    "odpc":{
+        "collection_name": "Office of the Data Protection Commissioner",
+        "collection_description": "The Office of the Data Protection Commissioner (ODPC) is a government agency responsible for overseeing data protection and privacy in Kenya. It ensures compliance with data protection laws and promotes awareness of data rights.",
     }
 }
 
@@ -41,6 +51,11 @@ remote_db: chromadb.HttpClient = chromadb.HttpClient(
     settings=ChromaSettings(
         chroma_client_auth_provider="chromadb.auth.basic_authn.BasicAuthClientProvider",
         chroma_client_auth_credentials=f"{os.getenv('CHROMA_USERNAME')}:{os.getenv('CHROMA_PASSWORD')}")
+)
+
+
+embed_model = OpenAIEmbedding(
+    model="text-embedding-3-small", embed_batch_size=100
 )
 
 
@@ -72,6 +87,7 @@ def load_indexes() -> Dict[str, VectorStoreIndex]:
         
         index = VectorStoreIndex.from_vector_store(
             vector_store=vector_store,
+            embed_model=embed_model,
         )
         index_dict[name] = index
         logger.info(f"Loaded index for {entry['collection_name']}")
@@ -122,7 +138,34 @@ async def query_kfcb(query: str) -> List[NodeWithScore]:
     return await retriever.aretrieve(query)
 
 
+async def query_brs(query: str) -> List[NodeWithScore]:
+    """
+    Query the Business Registration Service collection.
+    """
+    logger.info("Querying Business Registration Service collection")
+
+    index = index_dict["brs"]
+    retriever = index.as_retriever()  
+
+    return await retriever.aretrieve(query)
+
+async def query_odpc(query: str) -> List[NodeWithScore]:
+    """
+    Query the Office of the Data Protection Commissioner collection.
+    """
+    logger.info("Querying Office of the Data Protection Commissioner collection")
+
+    index = index_dict["odpc"]
+    retriever = index.as_retriever()  
+
+    return await retriever.aretrieve(query)
+
+
+
+
 tools: List[Callable] = [
     query_kfc,
-    query_kfcb
+    query_kfcb,
+    query_brs,
+    query_odpc
 ]

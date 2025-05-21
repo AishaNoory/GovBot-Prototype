@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Any
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_core import to_jsonable_python
+from app.core.rag.tool_loader import collection_dict
 
 Settings.llm = OpenAI(
     model="gpt-4o",

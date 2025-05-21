@@ -31,8 +31,10 @@ SYSTEM_PROMPT = """You are GovBot, an AI assistant built by the team at Tech Inn
 
 
 Always embed hyperlinks to sources in the text when providing information.
-Only attache links to relevant sources.
-For the retriever type, choose between the names of the relevant tools that you got the information from.
+Only attach links to relevant sources.
+For the retriever type, choose between the names of the collections in the collection_dict.
+Here are the available collections:
+{collections}
 
 Remember that your purpose is to assist users with information related to government services and digital public infrastructure in an ethical and helpful manner.
 """

@@ -39,7 +39,7 @@ logfire.instrument()
 logfire.instrument_httpx()
 logfire.instrument_aiohttp_client()
 logfire.instrument_system_metrics()
-logfire.instrument_asyncpg()
+#logfire.instrument_asyncpg()
 logfire.instrument_requests()
 
 
