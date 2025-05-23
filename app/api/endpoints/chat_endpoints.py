@@ -26,6 +26,16 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None  # Session ID can be provided by frontend
     user_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "message": "What services does the government provide for business registration?",
+                "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                "user_id": "user123",
+                "metadata": {"platform": "web", "language": "en"}
+            }
+        }
 
 class ChatResponse(BaseModel):
     session_id: str
@@ -34,6 +44,26 @@ class ChatResponse(BaseModel):
     confidence: float
     retriever_type: str
     trace_id: Optional[str] = None  # Optional trace ID for monitoring
+    recommended_follow_up_questions: Optional[List[str]] = None
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                "answer": "To register a business in Kenya, you need to follow these steps...",
+                "sources": [
+                    {"title": "Business Registration Guidelines", "url": "https://example.gov/business-reg"}
+                ],
+                "confidence": 0.92,
+                "retriever_type": "hybrid",
+                "trace_id": "7fa85f64-5717-4562-b3fc-2c963f66afa7",
+                "recommended_follow_up_questions": [
+                    "What are the fees for business registration?",
+                    "How long does the business registration process take?",
+                    "What documents are required for business registration?"
+                ]
+            }
+        }
 
 class ChatHistoryResponse(BaseModel):
     session_id: str
@@ -43,6 +73,39 @@ class ChatHistoryResponse(BaseModel):
     updated_at: datetime
     message_count: int = 0
     num_messages: int  # Total number of messages
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                "messages": [
+                    {
+                        "id": 1,
+                        "message_id": "msg1",
+                        "message_type": "user",
+                        "message_object": {"query": "What services does the government provide for business registration?"},
+                        "timestamp": "2023-10-20T14:30:15.123456"
+                    },
+                    {
+                        "id": 2,
+                        "message_id": "msg2",
+                        "message_type": "assistant",
+                        "message_object": {
+                            "answer": "To register a business in Kenya, you need to follow these steps...",
+                            "sources": [{"title": "Business Registration Guidelines", "url": "https://example.gov/business-reg"}],
+                            "confidence": 0.92,
+                            "retriever_type": "hybrid"
+                        },
+                        "timestamp": "2023-10-20T14:30:18.654321"
+                    }
+                ],
+                "user_id": "user123",
+                "created_at": "2023-10-20T14:30:15.123456",
+                "updated_at": "2023-10-20T14:30:18.654321",
+                "message_count": 2,
+                "num_messages": 2
+            }
+        }
 
 
 @router.post("/", response_model=ChatResponse)

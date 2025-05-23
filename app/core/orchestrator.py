@@ -24,6 +24,25 @@ class Output(BaseModel):
     sources: list
     confidence: float
     retriever_type: str
+    recommended_follow_up_questions: Optional[List[str]] = None
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "answer": "The Kenya Film Commission (KFC) plays a crucial role in developing and promoting the film industry in Kenya. It provides various services including...",
+                "sources": [
+                    {"title": "Kenya Film Commission Overview", "url": "https://kenyafilm.go.ke/about-us"},
+                    {"title": "Film Industry Guidelines", "url": "https://kenyafilm.go.ke/guidelines"}
+                ],
+                "confidence": 0.95,
+                "retriever_type": "hybrid",
+                "recommended_follow_up_questions": [
+                    "What financial incentives does the Kenya Film Commission offer?",
+                    "How can I register a film production company in Kenya?",
+                    "What are the film shooting requirements in Kenya?"
+                ]
+            }
+        }
 
 
 def generate_agent() -> Agent:
@@ -35,8 +54,8 @@ def generate_agent() -> Agent:
     """
     # Initialize the agent with the system prompt and retrievers
     agent = Agent(
-        'openai:gpt-4o',
-        instructions=SYSTEM_PROMPT,  
+        model = 'openai:gpt-4o',
+        instructions=SYSTEM_PROMPT.format(collections=str(collection_dict)),  
         tools=tools,
         verbose=True,
         output_type=Output
