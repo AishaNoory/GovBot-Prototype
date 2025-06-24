@@ -13,7 +13,7 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter
 
 from app.db.database import get_db
 from app.utils.chat_persistence import ChatPersistenceService
-from app.core.orchestrator import generate_agent, Output, Source
+from app.core.orchestrator import generate_agent, Output, Source, Usage, UsageDetails
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -66,6 +66,11 @@ class ChatResponse(BaseModel):
         description="Suggested follow-up questions the user might want to ask next"
     )
     
+    usage: Optional[Usage] = Field(
+        default=None,
+        description="Token usage information from the model response"
+    )
+    
     class Config:
         json_schema_extra = {
             "example": {
@@ -85,7 +90,20 @@ class ChatResponse(BaseModel):
                     "What are the fees for business registration?",
                     "How long does the business registration process take?",
                     "What documents are required for business registration?"
-                ]
+                ],
+                "usage": {
+                    "requests": 1,
+                    "request_tokens": 891,
+                    "response_tokens": 433,
+                    "total_tokens": 1324,
+                    "details": {
+                        "accepted_prediction_tokens": 0,
+                        "audio_tokens": 0,
+                        "reasoning_tokens": 0,
+                        "rejected_prediction_tokens": 0,
+                        "cached_tokens": 0
+                    }
+                }
             }
         }
 
@@ -118,7 +136,20 @@ class ChatHistoryResponse(BaseModel):
                             "answer": "To register a business in Kenya, you need to follow these steps...",
                             "sources": [{"title": "Business Registration Guidelines", "url": "https://example.gov/business-reg"}],
                             "confidence": 0.92,
-                            "retriever_type": "brs"  # Changed from "hybrid" to a valid collection ID
+                            "retriever_type": "brs",  # Changed from "hybrid" to a valid collection ID
+                            "usage": {
+                                "requests": 1,
+                                "request_tokens": 891,
+                                "response_tokens": 433,
+                                "total_tokens": 1324,
+                                "details": {
+                                    "accepted_prediction_tokens": 0,
+                                    "audio_tokens": 0,
+                                    "reasoning_tokens": 0,
+                                    "rejected_prediction_tokens": 0,
+                                    "cached_tokens": 0
+                                }
+                            }
                         },
                         "timestamp": "2023-10-20T14:30:18.654321"
                     }
@@ -192,6 +223,9 @@ async def process_chat(
         processing_time = (datetime.now() - start_time).total_seconds()
         logger.info(f"[{trace_id}] Processed message in {processing_time:.2f} seconds")
         
+        # Get usage information
+        usage_info = convert_usage(result.usage())
+        
         # Create assistant message object
         assistant_message_obj = {
             "session_id": session_id,
@@ -199,7 +233,8 @@ async def process_chat(
             "sources": result.output.sources,
             "confidence": result.output.confidence,
             "retriever_type": result.output.retriever_type,
-            "trace_id": trace_id
+            "trace_id": trace_id,
+            "usage": usage_info.dict() if usage_info else None
         }
         
         # Save the assistant message with history
@@ -224,7 +259,8 @@ async def process_chat(
             sources=result.output.sources,
             confidence=result.output.confidence,
             retriever_type=result.output.retriever_type,
-            trace_id=trace_id
+            trace_id=trace_id,
+            usage=usage_info
         )
     
     except HTTPException:
@@ -317,3 +353,25 @@ async def delete_chat(
     except Exception as e:
         logger.error(f"Error deleting chat: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+# Helper function to convert pydantic-ai usage to our Usage model
+def convert_usage(pydantic_ai_usage) -> Optional[Usage]:
+    """Convert pydantic-ai usage object to our Usage model."""
+    if not pydantic_ai_usage:
+        return None
+    
+    usage_dict = pydantic_ai_usage.__dict__
+    
+    return Usage(
+        requests=usage_dict.get('requests', 0),
+        request_tokens=usage_dict.get('request_tokens', 0),
+        response_tokens=usage_dict.get('response_tokens', 0),
+        total_tokens=usage_dict.get('total_tokens', 0),
+        details=UsageDetails(
+            accepted_prediction_tokens=usage_dict.get('details', {}).get('accepted_prediction_tokens', 0),
+            audio_tokens=usage_dict.get('details', {}).get('audio_tokens', 0),
+            reasoning_tokens=usage_dict.get('details', {}).get('reasoning_tokens', 0),
+            rejected_prediction_tokens=usage_dict.get('details', {}).get('rejected_prediction_tokens', 0),
+            cached_tokens=usage_dict.get('details', {}).get('cached_tokens', 0)
+        )
+    )

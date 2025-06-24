@@ -43,6 +43,24 @@ class Source(BaseModel):
     )
 
 
+class UsageDetails(BaseModel):
+    """Usage details from the model response."""
+    accepted_prediction_tokens: int = Field(default=0, description="Number of accepted prediction tokens")
+    audio_tokens: int = Field(default=0, description="Number of audio tokens")
+    reasoning_tokens: int = Field(default=0, description="Number of reasoning tokens")
+    rejected_prediction_tokens: int = Field(default=0, description="Number of rejected prediction tokens")
+    cached_tokens: int = Field(default=0, description="Number of cached tokens")
+
+
+class Usage(BaseModel):
+    """Usage information from the model response."""
+    requests: int = Field(description="Number of requests made")
+    request_tokens: int = Field(description="Number of tokens in the request")
+    response_tokens: int = Field(description="Number of tokens in the response")
+    total_tokens: int = Field(description="Total number of tokens used")
+    details: UsageDetails = Field(description="Additional usage details")
+
+
 class Output(BaseModel):
     """
     Structured output format for agent responses with source attribution and metadata.
@@ -72,6 +90,11 @@ class Output(BaseModel):
         description="Suggested follow-up questions the user might want to ask next"
     )
     
+    usage: Optional[Usage] = Field(
+        default=None,
+        description="Token usage information from the model response"
+    )
+    
     class Config:
         json_schema_extra = {
             "example": {
@@ -94,7 +117,20 @@ class Output(BaseModel):
                     "What financial incentives does the Kenya Film Commission offer?",
                     "How can I register a film production company in Kenya?",
                     "What are the film shooting requirements in Kenya?"
-                ]
+                ],
+                "usage": {
+                    "requests": 1,
+                    "request_tokens": 891,
+                    "response_tokens": 433,
+                    "total_tokens": 1324,
+                    "details": {
+                        "accepted_prediction_tokens": 0,
+                        "audio_tokens": 0,
+                        "reasoning_tokens": 0,
+                        "rejected_prediction_tokens": 0,
+                        "cached_tokens": 0
+                    }
+                }
             }
         }
 
@@ -127,10 +163,22 @@ if __name__ == "__main__":
     
     agent = generate_agent()
 
+
+    agent = Agent(
+        model = 'openai:gpt-4o',
+        instructions=SYSTEM_PROMPT,  
+        verbose=True,
+        output_type=Output
+    )
+
     # Example 1: Starting a new conversation
     result1 = agent.run_sync(
         "What is the role of the Kenya Film Commission in the film industry?"
     )
+
+    
+    result1.usage().__dict__
+
     print("First response:", result1.output.answer)
     
     # Save message history after the first exchange
