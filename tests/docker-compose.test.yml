@@ -89,6 +89,8 @@ services:
     environment:
       - AUTH_CREDENTIALS_FILE=/chroma/server.htpasswd
       - AUTH_PROVIDER=basic
+      - ALLOW_RESET=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
     networks:
       - govstack-test-network
     restart: unless-stopped

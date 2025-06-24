@@ -1,7 +1,24 @@
 #!/bin/bash
 
-# GovStack Scalability Testing Runner
-# This script provides easy commands to run various types of tests
+# GovStack Scalability Testing - script provides easy commands to run various types of tests
+
+# Function to check if the API is accessible
+check_api() {
+    local url="${EXTERNAL_API_URL:-$API_URL}"
+    print_info "Checking if API is accessible at $url..."
+    
+    if curl -f -s --connect-timeout 10 --max-time 30 "$url/health" > /dev/null; then
+        print_success "API is accessible at $url"
+    else
+        print_warning "API is not accessible at $url"
+        print_info "Make sure the server is running and accessible from this machine."
+        print_info "For local testing: docker-compose -f docker-compose.dev.yml up -d"
+        print_info "For external testing: Check network connectivity and server status"
+        
+        # Don't exit - let tests try anyway as the health endpoint might not exist
+        print_info "Continuing with tests anyway (health endpoint might not be available)..."
+    fi
+}
 
 set -e
 
@@ -43,18 +60,6 @@ check_docker() {
     fi
 }
 
-# Function to check if the API is accessible
-check_api() {
-    print_info "Checking if API is accessible at $API_URL..."
-    if curl -f -s "$API_URL/health" > /dev/null; then
-        print_success "API is accessible"
-    else
-        print_warning "API is not accessible at $API_URL"
-        echo "Make sure the GovStack API is running before starting tests."
-        echo "You can start it with: docker-compose -f docker-compose.dev.yml up -d"
-    fi
-}
-
 # Function to start the test environment
 start_test_env() {
     print_info "Starting test environment..."
@@ -64,7 +69,7 @@ start_test_env() {
     
     # Load environment variables
     if [ -f .env.test ]; then
-        export $(cat .env.test | grep -v '^#' | xargs)
+        export $(cat .env.test | grep -v '^#' | grep -v '^$' | grep '=' | sed 's/#.*//' | xargs)
     fi
     
     # Start services
@@ -78,12 +83,53 @@ start_test_env() {
     echo "  - Test Database: localhost:5434"
 }
 
+# Function to start external test environment (no local API)
+start_external_test_env() {
+    print_info "Starting external test environment..."
+    check_docker
+    
+    cd "$(dirname "$0")"
+    
+    # Load external environment variables
+    if [ -f .env.external ]; then
+        export $(cat .env.external | grep -v '^#' | grep -v '^$' | grep '=' | sed 's/#.*//' | xargs)
+        print_info "Using external API: ${EXTERNAL_API_URL:-not set}"
+    else
+        print_warning "No .env.external file found. Using defaults."
+        export EXTERNAL_API_URL="http://192.168.1.100:5005"
+    fi
+    
+    # Check if external API is accessible
+    check_api
+    
+    # Copy external prometheus config
+    cp prometheus.external.yml prometheus.yml
+    
+    # Start external test services
+    docker-compose -p govstack-testing-external -f docker-compose.external.yml up -d
+    
+    print_success "External test environment started"
+    print_info "Services available:"
+    echo "  - Test Service UI: http://localhost:8080"
+    echo "  - Prometheus: http://localhost:9090"
+    echo "  - Grafana: http://localhost:3000 (admin/admin)"
+    echo "  - Target API: $EXTERNAL_API_URL"
+}
+
 # Function to stop the test environment
 stop_test_env() {
     print_info "Stopping test environment..."
     cd "$(dirname "$0")"
     docker-compose -p govstack-testing -f docker-compose.test.yml down
     print_success "Test environment stopped"
+}
+
+# Function to stop external test environment
+stop_external_test_env() {
+    print_info "Stopping external test environment..."
+    cd "$(dirname "$0")"
+    docker-compose -p govstack-testing-external -f docker-compose.external.yml down
+    print_success "External test environment stopped"
 }
 
 # Function to run tests using the CLI
@@ -171,29 +217,37 @@ show_help() {
 Usage: $0 [COMMAND] [OPTIONS]
 
 Commands:
-  start-env         Start the test environment with Docker
-  stop-env          Stop the test environment
-  run-tests         Run scalability tests
-  quick-check       Run a quick performance check
-  unit-tests        Run unit tests
-  integration-tests Run integration tests
-  locust-ui         Start Locust web UI for interactive testing
-  cleanup           Clean up test result files
-  logs [service]    Show logs for a service (default: test-service)
-  help              Show this help message
+  start-env           Start full test environment (includes local API)
+  start-external      Start external test environment (tests remote API)
+  stop-env            Stop test environment  
+  stop-external       Stop external test environment
+  run-tests           Run scalability tests
+  quick-check         Run a quick performance check
+  unit-tests          Run unit tests
+  integration-tests   Run integration tests
+  locust-ui           Start Locust web UI for interactive testing
+  cleanup             Clean up test result files
+  logs [service]      Show logs for a service (default: test-service)
+  help                Show this help message
 
 Options:
-  --api-url URL     API base URL (default: $API_URL)
-  --max-users N     Maximum concurrent users (default: $MAX_USERS)
-  --daily-users N   Daily users target (default: $DAILY_USERS)
-  --test-types LIST Comma-separated test types (default: $TEST_TYPES)
-  --output FILE     Output file for results
-  --verbose         Enable verbose output
+  --api-url URL       API base URL (default: $API_URL)
+  --max-users N       Maximum concurrent users (default: $MAX_USERS)
+  --daily-users N     Daily users target (default: $DAILY_USERS)
+  --test-types LIST   Comma-separated test types (default: $TEST_TYPES)
+  --output FILE       Output file for results
+  --verbose           Enable verbose output
 
 Environment Variables:
-  You can create a .env.test file to set default values for all options.
+  EXTERNAL_API_URL    URL of external GovStack API to test
+  You can create a .env.test or .env.external file to set default values.
 
 Examples:
+  # External server testing
+  $0 start-external                               # Start external test environment
+  $0 run-tests --api-url http://192.168.1.100:5005 # Test external server
+  
+  # Local testing  
   $0 start-env                                    # Start test environment
   $0 run-tests --max-users 500                   # Run tests with 500 max users
   $0 quick-check --api-url http://api:5005       # Quick check against Docker API
@@ -252,8 +306,14 @@ case $COMMAND in
     start-env)
         start_test_env
         ;;
+    start-external)
+        start_external_test_env
+        ;;
     stop-env)
         stop_test_env
+        ;;
+    stop-external)
+        stop_external_test_env
         ;;
     run-tests)
         check_api

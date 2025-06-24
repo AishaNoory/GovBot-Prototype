@@ -3,14 +3,16 @@ Scalability Testing Configuration
 """
 import os
 from typing import Dict, Any, List
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 @dataclass
 class TestConfig:
     """Configuration for scalability tests"""
     # API Configuration
-    api_base_url: str = os.getenv("API_BASE_URL", "http://localhost:5005")
+    api_base_url: str = os.getenv("API_BASE_URL", os.getenv("EXTERNAL_API_URL", "http://localhost:5005"))
     api_timeout: int = int(os.getenv("API_TIMEOUT", "30"))
+    network_timeout: int = int(os.getenv("NETWORK_TIMEOUT", "60"))
+    connection_retries: int = int(os.getenv("CONNECTION_RETRIES", "3"))
     
     # Load Testing Configuration
     max_users: int = int(os.getenv("MAX_USERS", "1000"))
@@ -19,7 +21,7 @@ class TestConfig:
     
     # Daily Usage Simulation
     daily_users: int = int(os.getenv("DAILY_USERS", "40000"))
-    peak_hours: List[int] = [9, 10, 11, 14, 15, 16]  # Peak usage hours
+    peak_hours: List[int] = field(default_factory=lambda: [9, 10, 11, 14, 15, 16])  # Peak usage hours
     
     # Database Configuration
     database_url: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5433/govstackdb")
@@ -29,7 +31,7 @@ class TestConfig:
     prometheus_port: int = int(os.getenv("PROMETHEUS_PORT", "8000"))
     
     # Test Data Configuration
-    sample_queries: List[str] = [
+    sample_queries: List[str] = field(default_factory=lambda: [
         "What services does the government provide for business registration?",
         "How do I apply for a passport?",
         "What are the requirements for obtaining a driver's license?",
@@ -40,11 +42,11 @@ class TestConfig:
         "How can I report a pothole or road issue?",
         "What healthcare services are available for seniors?",
         "How do I register my newborn child?"
-    ]
+    ])
     
     # Memory and Performance Thresholds
     max_memory_mb: int = int(os.getenv("MAX_MEMORY_MB", "2048"))
-    max_response_time_ms: int = int(os.getenv("MAX_RESPONSE_TIME_MS", "2000"))
+    max_response_time_ms: int = int(os.getenv("MAX_RESPONSE_TIME_MS", "3000"))  # Increased for network latency
     min_success_rate: float = float(os.getenv("MIN_SUCCESS_RATE", "0.95"))
     max_error_rate: float = float(os.getenv("MAX_ERROR_RATE", "0.05"))
     
@@ -68,7 +70,9 @@ class TestConfig:
             'max_response_time_ms': self.max_response_time_ms,
             'min_success_rate': self.min_success_rate,
             'concurrent_sessions': self.concurrent_sessions,
-            'messages_per_session': self.messages_per_session
+            'messages_per_session': self.messages_per_session,
+            'network_timeout': self.network_timeout,
+            'connection_retries': self.connection_retries
         }
 
 # Global configuration instance
