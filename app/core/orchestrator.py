@@ -4,14 +4,26 @@ from llama_index.core import Settings
 from pydantic_ai import Agent
 from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
-from pydantic import BaseModel
-from typing import List, Optional, Any
+from pydantic import BaseModel, Field
+from typing import List, Optional, Any, Dict
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_core import to_jsonable_python
 from app.core.rag.tool_loader import collection_dict
+import yaml
+import os
 
-Settings.llm = OpenAI(
-    model="gpt-4o",
+
+#Settings.llm = OpenAI(
+#    model="gpt-4o",
+#)
+from dotenv import load_dotenv
+load_dotenv()
+
+
+client = OpenAI(
+    api_key=os.getenv("RUNPOD_API_KEY"),
+    base_url=os.getenv("RUNPOD_API_BASE_URL"),
+    model=os.getenv("RUNPOD_MODEL_NAME", "gpt-4o"),
 )
 
 Settings.embed_model = OpenAIEmbedding(
@@ -19,23 +31,65 @@ Settings.embed_model = OpenAIEmbedding(
 )
 
 
+
+class Source(BaseModel):
+    """Represents a source of information referenced in the answer."""
+    title: str = Field(description="The title of the source document")
+    url: str = Field(description="The URL where the source document can be accessed")
+    snippet: Optional[str] = Field(
+        None, 
+        description="A relevant excerpt from the source document that supports the answer",
+        max_length=1000
+    )
+
+
 class Output(BaseModel):
-    answer: str
-    sources: list
-    confidence: float
-    retriever_type: str
-    recommended_follow_up_questions: Optional[List[str]] = None
+    """
+    Structured output format for agent responses with source attribution and metadata.
+    """
+    answer: str = Field(
+        description="The comprehensive answer to the user's question",
+        min_length=1
+    )
+    
+    sources: List[Source] = Field(
+        description="List of sources that provided information for the answer",
+        default_factory=list
+    )
+    
+    confidence: float = Field(
+        description="Confidence score between 0.0 and 1.0 indicating reliability of the answer",
+        ge=0.0,
+        le=1.0
+    )
+    
+    retriever_type: str = Field(
+        description="Identifier for the knowledge collection that was used for retrieval"
+    )
+    
+    recommended_follow_up_questions: List[str] = Field(
+        default_factory=list,
+        description="Suggested follow-up questions the user might want to ask next"
+    )
     
     class Config:
         json_schema_extra = {
             "example": {
                 "answer": "The Kenya Film Commission (KFC) plays a crucial role in developing and promoting the film industry in Kenya. It provides various services including...",
                 "sources": [
-                    {"title": "Kenya Film Commission Overview", "url": "https://kenyafilm.go.ke/about-us"},
-                    {"title": "Film Industry Guidelines", "url": "https://kenyafilm.go.ke/guidelines"}
+                    {
+                        "title": "Kenya Film Commission Overview", 
+                        "url": "https://kenyafilm.go.ke/about-us",
+                        "snippet": "The Kenya Film Commission (KFC) is mandated to develop, promote and market the film industry locally and internationally."
+                    },
+                    {
+                        "title": "Film Industry Guidelines", 
+                        "url": "https://kenyafilm.go.ke/guidelines",
+                        "snippet": "KFC provides financial support, technical assistance, and marketing opportunities to filmmakers in Kenya."
+                    }
                 ],
                 "confidence": 0.95,
-                "retriever_type": "kfc",  # Changed from "hybrid" to a valid collection ID
+                "retriever_type": "kfc",
                 "recommended_follow_up_questions": [
                     "What financial incentives does the Kenya Film Commission offer?",
                     "How can I register a film production company in Kenya?",
@@ -52,20 +106,25 @@ def generate_agent() -> Agent:
     Returns:
         Initialized agent
     """
+
+    collection_yml = yaml.dump(collection_dict, default_flow_style=False)
     # Initialize the agent with the system prompt and retrievers
     agent = Agent(
         model = 'openai:gpt-4o',
-        instructions=SYSTEM_PROMPT.format(collections=str(collection_dict)),  
+        instructions=SYSTEM_PROMPT,  
         tools=tools,
         verbose=True,
         output_type=Output
     )
+    
     
     return agent
 
 
 if __name__ == "__main__":
     # Example usage
+
+    
     agent = generate_agent()
 
     # Example 1: Starting a new conversation

@@ -13,7 +13,7 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter
 
 from app.db.database import get_db
 from app.utils.chat_persistence import ChatPersistenceService
-from app.core.orchestrator import generate_agent, Output
+from app.core.orchestrator import generate_agent, Output, Source
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -39,12 +39,32 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     session_id: str
-    answer: str
-    sources: List[Dict[str, str]] = []
-    confidence: float
-    retriever_type: str
+    answer: str = Field(
+        description="The comprehensive answer to the user's question",
+        min_length=1
+    )
+    
+    sources: List[Source] = Field(
+        description="List of sources that provided information for the answer",
+        default_factory=list
+    )
+    
+    confidence: float = Field(
+        description="Confidence score between 0.0 and 1.0 indicating reliability of the answer",
+        ge=0.0,
+        le=1.0
+    )
+    
+    retriever_type: str = Field(
+        description="Identifier for the knowledge collection that was used for retrieval"
+    )
+    
     trace_id: Optional[str] = None  # Optional trace ID for monitoring
-    recommended_follow_up_questions: Optional[List[str]] = None
+    
+    recommended_follow_up_questions: List[str] = Field(
+        default_factory=list,
+        description="Suggested follow-up questions the user might want to ask next"
+    )
     
     class Config:
         json_schema_extra = {
@@ -52,10 +72,14 @@ class ChatResponse(BaseModel):
                 "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
                 "answer": "To register a business in Kenya, you need to follow these steps...",
                 "sources": [
-                    {"title": "Business Registration Guidelines", "url": "https://example.gov/business-reg"}
+                    {
+                        "title": "Business Registration Guidelines", 
+                        "url": "https://example.gov/business-reg",
+                        "snippet": "The Business Registration Service (BRS) is a state corporation that registers businesses in Kenya."
+                    }
                 ],
                 "confidence": 0.92,
-                "retriever_type": "brs",  # Changed from "hybrid" to a valid collection ID
+                "retriever_type": "brs",
                 "trace_id": "7fa85f64-5717-4562-b3fc-2c963f66afa7",
                 "recommended_follow_up_questions": [
                     "What are the fees for business registration?",
