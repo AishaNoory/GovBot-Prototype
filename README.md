@@ -296,34 +296,99 @@ govstack/
 │   ├── api/              # API endpoints and FastAPI application
 │   │   ├── fast_api_app.py  # Main FastAPI application entry point
 │   │   └── endpoints/    # API endpoint modules organized by feature
+│   │       ├── chat_endpoints.py     # Chat and conversation endpoints
+│   │       └── webpage_endpoints.py  # Web crawling and webpage endpoints
 │   ├── core/             # Core business logic
 │   │   ├── crawlers/     # Web crawling components
+│   │   │   ├── web_crawler.py  # Main web crawler implementation
+│   │   │   └── utils.py        # Crawler utility functions
 │   │   ├── orchestrator.py  # Central orchestration of AI agents
 │   │   └── rag/          # Retrieval Augmented Generation components
+│   │       ├── indexer.py      # Vector indexing for RAG
+│   │       ├── tool_loader.py  # Tool loading utilities
+│   │       └── README.md       # RAG system documentation
 │   ├── db/               # Database models and utilities
+│   │   ├── database.py   # Database configuration and connection
 │   │   └── models/       # SQLAlchemy ORM models
+│   │       ├── chat.py      # Chat sessions and message models
+│   │       ├── document.py  # Document storage models
+│   │       └── webpage.py   # Webpage and crawling models
+│   ├── models/           # Additional model definitions
 │   └── utils/            # Utility functions and shared code
-│       ├── prompts.py    # LLM prompt templates
-│       └── storage.py    # Storage utilities (MinIO interface)
+│       ├── chat_persistence.py  # Chat history persistence
+│       ├── prompts.py           # LLM prompt templates
+│       ├── storage.py           # Storage utilities (MinIO interface)
+│       └── README_chat_persistence.md  # Chat persistence documentation
+├── backups/              # Database backup storage
+│   └── prod/            # Production database backups
+├── data/                 # Persistent data storage (created by containers)
+│   ├── backups/         # Database backup files
+│   ├── backups-dev/     # Development database backups
+│   ├── chroma/          # ChromaDB vector database files
+│   ├── chroma-dev/      # Development ChromaDB files
+│   ├── minio/           # MinIO object storage
+│   ├── minio-dev/       # Development MinIO storage
+│   ├── postgres/        # PostgreSQL database files
+│   └── postgres-dev/    # Development PostgreSQL files
 ├── docker/               # Docker configuration files
 │   ├── api.Dockerfile    # Production API container definition
-│   └── api.dev.Dockerfile # Development API container definition
+│   ├── api.dev.Dockerfile # Development API container definition
+│   └── backup.Dockerfile # Database backup container definition
+├── docs/                 # Documentation files
+│   ├── dqf.md           # Data Quality Framework documentation
+│   ├── GovStack_Detailed_Presentation_Slides.md
+│   ├── GovStack_Technical_Architecture_Presentation.md
+│   ├── implementation_status.md  # Implementation status tracking
+│   └── technical_design.md       # Technical design documentation
+├── examples/             # Example code and usage
+│   └── chat_api_examples.md  # Chat API usage examples
 ├── scripts/              # Utility scripts for operations and maintenance
-│   ├── add_collection_id_column.py  # Database migration script
-│   ├── add_indexing_columns.py      # Database migration script
-│   ├── run_indexing.py              # Script to run RAG indexing
+│   ├── __init__.py      # Python package initialization
+│   ├── add_chat_tables.py           # Chat table migration script
+│   ├── add_collection_id_column.py  # Collection ID migration script
+│   ├── add_indexing_columns.py      # Indexing columns migration script
+│   ├── backup_service.sh            # Backup service script
+│   ├── check_indexing_status.py     # Indexing status checker
+│   ├── migrate_chat_tables.py       # Chat table migration
+│   ├── postgres_backup.sh           # PostgreSQL backup script
+│   ├── run_indexing.py              # RAG indexing runner
+│   ├── run_migration.py             # Database migration runner
+│   ├── test_chat_persistence.py     # Chat persistence tests
+│   ├── test_new_chat_persistence.py # New chat persistence tests
 │   └── update_webpage_collections.py # Collection management script
-├── data/                 # Persistent data storage (created by containers)
-│   ├── chroma/           # ChromaDB vector database files
-│   ├── minio/            # MinIO object storage
-│   └── postgres/         # PostgreSQL database files
+├── storage/              # Additional storage utilities
+├── tests/                # Comprehensive testing suite
+│   ├── cli.py           # Command-line interface for tests
+│   ├── config.py        # Test configuration
+│   ├── run_tests.sh     # Test execution script
+│   ├── requirements.txt # Test dependencies
+│   ├── Dockerfile       # Test container definition
+│   ├── docker-compose.test.yml      # Test environment Docker config
+│   ├── docker-compose.external.yml  # External testing Docker config
+│   ├── .env.test        # Test environment variables
+│   ├── .env.external    # External testing environment variables
+│   ├── prometheus.yml   # Prometheus monitoring config
+│   ├── prometheus.external.yml # External Prometheus config
+│   ├── integration_tests/  # Integration test suite
+│   ├── load_tests/         # Load and performance tests
+│   ├── scalability_tests/  # Scalability testing
+│   ├── unit_tests/         # Unit test suite
+│   ├── utils/              # Test utilities
+│   ├── results/            # Test result storage
+│   ├── README.md           # Testing documentation
+│   └── EXTERNAL_TESTING.md # External testing guide
 ├── .env                  # Environment variables for production
+├── .env.dev              # Development environment variables
 ├── .env.example          # Example environment configuration
+├── .gitignore            # Git ignore patterns
 ├── requirements.txt      # Python dependencies
 ├── docker-compose.yml    # Production Docker configuration
 ├── docker-compose.dev.yml  # Development Docker configuration
+├── docker_inspector.sh  # Docker inspection utility
 ├── server.htpasswd       # ChromaDB authentication file
-└── README.md             # Project documentation
+├── shutdown_with_backup.sh  # Graceful shutdown with backup script
+├── README.md             # Project documentation
+└── README_DATABASE_BACKUPS.md  # Database backup documentation
 ```
 
 ### Key Components
