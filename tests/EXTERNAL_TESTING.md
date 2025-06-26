@@ -30,7 +30,7 @@ EXTERNAL_API_URL=http://YOUR_SERVER_IP:5005
 ```
 
 This will start:
-- Test Service UI: http://localhost:8080
+- Test Service UI: http://localhost:8084
 - Prometheus: http://localhost:9090  
 - Grafana: http://localhost:3000 (admin/admin)
 
@@ -112,7 +112,7 @@ When testing external servers:
 
 - **Grafana Dashboard**: http://localhost:3000
 - **Prometheus Metrics**: http://localhost:9090
-- **Test Service Status**: http://localhost:8080
+- **Test Service Status**: http://localhost:8084
 
 ### Generated Reports
 

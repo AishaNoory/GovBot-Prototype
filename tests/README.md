@@ -94,7 +94,7 @@ cd tests/
 ./run_tests.sh start-env
 
 # This will start:
-# - Test Service API (http://localhost:8080)
+# - Test Service API (http://localhost:8084)
 # - Prometheus Monitoring (http://localhost:9090) 
 # - Grafana Dashboard (http://localhost:3000)
 # - Test Database (localhost:5434)
@@ -106,7 +106,7 @@ cd tests/
 pip install -r requirements.txt
 
 # Start the test microservice manually
-python -m tests.cli service --port 8080 --host 0.0.0.0
+python -m tests.cli service --port 8084 --host 0.0.0.0
 ```
 
 ### Step 5: Verify Setup
@@ -142,7 +142,7 @@ curl -X POST http://localhost:5005/api/v1/chat \
 #### Web-Based Test Dashboard
 ```bash
 # Open test service UI
-open http://localhost:8080
+open http://localhost:8084
 
 # Available endpoints:
 # GET  /health              - Service health check
@@ -243,7 +243,7 @@ python -m tests.cli quick-check --api-url http://localhost:5005
 
 #### Start Test Microservice
 ```bash
-python -m tests.cli service --port 8080 --host 0.0.0.0
+python -m tests.cli service --port 8084 --host 0.0.0.0
 ```
 
 #### Interactive Locust UI
@@ -281,17 +281,17 @@ The testing module includes a RESTful API service for remote test execution and 
 # Start complete environment including test service
 ./run_tests.sh start-env
 
-# Service available at http://localhost:8080
+# Service available at http://localhost:8084
 ```
 
 #### Standalone Method
 ```bash
 # Start only the test service
-python -m tests.cli service --port 8080 --host 0.0.0.0
+python -m tests.cli service --port 8084 --host 0.0.0.0
 
 # With custom configuration
 python -m tests.cli service \
-  --port 8080 \
+  --port 8084 \
   --host 0.0.0.0 \
   --api-url http://localhost:5005 \
   --max-users 1000
@@ -302,7 +302,7 @@ python -m tests.cli service \
 #### Health Check
 ```bash
 # Check service health
-curl http://localhost:8080/health
+curl http://localhost:8084/health
 
 # Response:
 {
@@ -316,7 +316,7 @@ curl http://localhost:8080/health
 #### Start Test Run
 ```bash
 # Start a comprehensive test run
-curl -X POST http://localhost:8080/tests/run \
+curl -X POST http://localhost:8084/tests/run \
   -H "Content-Type: application/json" \
   -d '{
     "test_types": ["baseline", "concurrent", "daily_load"],
@@ -339,7 +339,7 @@ curl -X POST http://localhost:8080/tests/run \
 #### Check Test Status
 ```bash
 # Get test execution status
-curl http://localhost:8080/tests/{test_id}/status
+curl http://localhost:8084/tests/{test_id}/status
 
 # Response:
 {
@@ -366,20 +366,20 @@ curl http://localhost:8080/tests/{test_id}/status
 #### Get Test Results
 ```bash
 # Retrieve complete test results
-curl http://localhost:8080/tests/{test_id}/results
+curl http://localhost:8084/tests/{test_id}/results
 
 # Download results as file
-curl http://localhost:8080/tests/{test_id}/results/download \
+curl http://localhost:8084/tests/{test_id}/results/download \
   -o test_results.json
 ```
 
 #### List All Tests
 ```bash
 # Get list of all test runs
-curl http://localhost:8080/tests
+curl http://localhost:8084/tests
 
 # With filtering
-curl "http://localhost:8080/tests?status=completed&limit=10"
+curl "http://localhost:8084/tests?status=completed&limit=10"
 
 # Response:
 {
@@ -408,7 +408,7 @@ curl "http://localhost:8080/tests?status=completed&limit=10"
 #### Stop Test Run
 ```bash
 # Stop a running test
-curl -X POST http://localhost:8080/tests/{test_id}/stop
+curl -X POST http://localhost:8084/tests/{test_id}/stop
 
 # Response:
 {
@@ -421,7 +421,7 @@ curl -X POST http://localhost:8080/tests/{test_id}/stop
 #### Get System Metrics
 ```bash
 # Current system metrics
-curl http://localhost:8080/metrics/system
+curl http://localhost:8084/metrics/system
 
 # Response:
 {
@@ -443,10 +443,10 @@ curl http://localhost:8080/metrics/system
 #### Test Configuration Templates
 ```bash
 # Get available test templates
-curl http://localhost:8080/templates
+curl http://localhost:8084/templates
 
 # Get specific template
-curl http://localhost:8080/templates/quick-performance-check
+curl http://localhost:8084/templates/quick-performance-check
 
 # Response:
 {
@@ -470,7 +470,7 @@ import asyncio
 import time
 
 class GovStackTestClient:
-    def __init__(self, base_url="http://localhost:8080"):
+    def __init__(self, base_url="http://localhost:8084"):
         self.base_url = base_url
         
     async def run_quick_test(self):
@@ -518,7 +518,7 @@ asyncio.run(main())
 const axios = require('axios');
 
 class GovStackTestClient {
-    constructor(baseUrl = 'http://localhost:8080') {
+    constructor(baseUrl = 'http://localhost:8084') {
         this.baseUrl = baseUrl;
         this.client = axios.create({ baseURL: baseUrl });
     }
@@ -573,7 +573,7 @@ class GovStackTestClient {
 #!/bin/bash
 
 # Simple bash client for test automation
-BASE_URL="http://localhost:8080"
+BASE_URL="http://localhost:8084"
 
 # Start test
 echo "Starting test..."
@@ -619,7 +619,7 @@ The test service also provides WebSocket endpoints for real-time test monitoring
 
 ```javascript
 // Connect to real-time test updates
-const ws = new WebSocket('ws://localhost:8080/ws/tests/{test_id}');
+const ws = new WebSocket('ws://localhost:8084/ws/tests/{test_id}');
 
 ws.onmessage = function(event) {
     const data = JSON.parse(event.data);
@@ -642,7 +642,7 @@ ws.onclose = function() {
 
 ```bash
 # Get Prometheus-format metrics
-curl http://localhost:8080/metrics
+curl http://localhost:8084/metrics
 
 # Sample metrics output:
 # govstack_test_requests_total{method="POST",status="200"} 1542
@@ -811,7 +811,7 @@ LOG_LEVEL=INFO                          # Logging level (DEBUG/INFO/WARN/ERROR)
 
 # Test Service Configuration
 TEST_SERVICE_HOST=0.0.0.0               # Test service bind address
-TEST_SERVICE_PORT=8080                  # Test service port
+TEST_SERVICE_PORT=8084                  # Test service port
 ENABLE_CORS=true                        # Enable CORS for web UI
 
 # OpenAI Configuration (if applicable)
@@ -1002,7 +1002,7 @@ scrape_configs:
 
   - job_name: 'test-service'
     static_configs:
-      - targets: ['test-service:8080']
+      - targets: ['test-service:8084']
     metrics_path: '/metrics'
     scrape_interval: 5s
 
@@ -1124,7 +1124,7 @@ python -m tests.cli run --test custom --test-file tests/custom_tests/my_custom_t
 - Custom visualizations
 
 ### Access URLs (when using Docker)
-- **Test Service**: http://localhost:8080
+- **Test Service**: http://localhost:8084
 - **Prometheus**: http://localhost:9090
 - **Grafana**: http://localhost:3000 (admin/admin)
 
@@ -1192,7 +1192,7 @@ docker run hello-world
 ```bash
 # Check what's using your ports
 sudo netstat -tulpn | grep :5005  # API port
-sudo netstat -tulpn | grep :8080  # Test service port
+sudo netstat -tulpn | grep :8084  # Test service port
 sudo netstat -tulpn | grep :3000  # Grafana port
 
 # Kill processes using required ports
@@ -1437,7 +1437,7 @@ sleep 30  # Wait for services to stabilize
 
 # 4. Verify each service
 curl http://localhost:5005/health
-curl http://localhost:8080/health
+curl http://localhost:8084/health
 ```
 
 #### Minimal Test Setup
@@ -1467,7 +1467,7 @@ docker-compose -f docker-compose.test.yml ps
 docker stats --no-stream
 
 # Port status
-sudo netstat -tulpn | grep -E ":(5005|8080|3000|9090)"
+sudo netstat -tulpn | grep -E ":(5005|8084|3000|9090)"
 
 # Log collection
 mkdir -p /tmp/govstack-debug
@@ -1543,7 +1543,7 @@ spec:
       - name: test-service
         image: govstack/test-service:latest
         ports:
-        - containerPort: 8080
+        - containerPort: 8084
         env:
         - name: API_BASE_URL
           value: "http://govstack-api:5005"
@@ -1561,13 +1561,13 @@ spec:
         livenessProbe:
           httpGet:
             path: /health
-            port: 8080
+            port: 8084
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
             path: /health
-            port: 8080
+            port: 8084
           initialDelaySeconds: 5
           periodSeconds: 5
 ---
@@ -1581,7 +1581,7 @@ spec:
   ports:
   - protocol: TCP
     port: 80
-    targetPort: 8080
+    targetPort: 8084
   type: LoadBalancer
 ```
 
@@ -1601,9 +1601,9 @@ kubectl get pods -l app=govstack-test-service
 # nginx load balancer config
 upstream govstack_test_service {
     least_conn;
-    server test-service-1:8080;
-    server test-service-2:8080;
-    server test-service-3:8080;
+    server test-service-1:8084;
+    server test-service-2:8084;
+    server test-service-3:8084;
 }
 
 server {
@@ -1742,7 +1742,7 @@ systemctl restart docker
 #!/bin/bash
 # auto-scale-tests.sh
 
-METRICS_URL="http://localhost:8080/metrics/system"
+METRICS_URL="http://localhost:8084/metrics/system"
 MAX_CPU=80
 MAX_MEMORY=85
 SCALE_UP_THRESHOLD=3
@@ -1846,7 +1846,7 @@ auth-service:
     - OAUTH2_PROXY_CLIENT_ID=your_github_client_id
     - OAUTH2_PROXY_CLIENT_SECRET=your_github_client_secret
     - OAUTH2_PROXY_COOKIE_SECRET=your_random_cookie_secret
-    - OAUTH2_PROXY_UPSTREAMS=http://test-service:8080
+    - OAUTH2_PROXY_UPSTREAMS=http://test-service:8084
 ```
 
 ### Disaster Recovery
@@ -2023,7 +2023,7 @@ import httpx
 async def run_automated_test():
     async with httpx.AsyncClient() as client:
         # Start test
-        response = await client.post("http://localhost:8080/tests/run", json={
+        response = await client.post("http://localhost:8084/tests/run", json={
             "test_types": ["baseline", "concurrent"],
             "max_users": 500
         })
@@ -2032,12 +2032,12 @@ async def run_automated_test():
         
         # Poll for completion
         while True:
-            status = await client.get(f"http://localhost:8080/tests/{test_id}/status")
+            status = await client.get(f"http://localhost:8084/tests/{test_id}/status")
             if status.json()["status"] == "completed":
                 break
         
         # Get results
-        results = await client.get(f"http://localhost:8080/tests/{test_id}/results")
+        results = await client.get(f"http://localhost:8084/tests/{test_id}/results")
         return results.json()
 ```
 

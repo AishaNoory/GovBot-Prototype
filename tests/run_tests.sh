@@ -77,7 +77,7 @@ start_test_env() {
     
     print_success "Test environment started"
     print_info "Services available:"
-    echo "  - Test Service UI: http://localhost:8080"
+    echo "  - Test Service UI: http://localhost:8084"
     echo "  - Prometheus: http://localhost:9090"
     echo "  - Grafana: http://localhost:3000 (admin/admin)"
     echo "  - Test Database: localhost:5434"
@@ -110,7 +110,7 @@ start_external_test_env() {
     
     print_success "External test environment started"
     print_info "Services available:"
-    echo "  - Test Service UI: http://localhost:8080"
+    echo "  - Test Service UI: http://localhost:8084"
     echo "  - Prometheus: http://localhost:9090"
     echo "  - Grafana: http://localhost:3000 (admin/admin)"
     echo "  - Target API: $EXTERNAL_API_URL"

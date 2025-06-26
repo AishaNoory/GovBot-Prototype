@@ -126,7 +126,7 @@ def run(
 
 @app.command()
 def service(
-    port: int = typer.Option(8080, "--port", "-p", help="Port to run the test service on"),
+    port: int = typer.Option(8084, "--port", "-p", help="Port to run the test service on"),
     host: str = typer.Option("0.0.0.0", "--host", help="Host to bind the service to")
 ):
     """Start the test microservice"""

@@ -7,7 +7,7 @@ services:
       context: ..
       dockerfile: tests/Dockerfile
     ports:
-      - "8080:8080"
+      - "8084:8080"
     environment:
       - API_BASE_URL=${EXTERNAL_API_URL:-http://192.168.1.100:5005}
       - MAX_USERS=${MAX_USERS:-1000}

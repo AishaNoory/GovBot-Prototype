@@ -126,7 +126,7 @@ This diagram illustrates the core components and data flow of the GovStack syste
   - Default credentials: postgres/postgres (unless changed in .env)
 
 - **Testing Infrastructure**:
-  - Test Service UI: http://localhost:8080 (when running tests)
+  - Test Service UI: http://localhost:8084 (when running tests)
   - Prometheus Monitoring: http://localhost:9090 (when running tests)
   - Grafana Dashboard: http://localhost:3000 (when running tests)
   - Locust Load Testing UI: http://localhost:8089 (when running load tests)
