@@ -5,10 +5,11 @@ from pydantic_ai import Agent
 from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
 from pydantic import BaseModel, Field
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, Union
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_core import to_jsonable_python
 from app.core.rag.tool_loader import collection_dict
+from app.models.follow_up_questions import FollowUpQuestions, create_questions_from_list
 import yaml
 import os
 
@@ -85,7 +86,7 @@ class Output(BaseModel):
         description="Identifier for the knowledge collection that was used for retrieval"
     )
     
-    recommended_follow_up_questions: List[str] = Field(
+    recommended_follow_up_questions: Union[List[str], FollowUpQuestions] = Field(
         default_factory=list,
         description="Suggested follow-up questions the user might want to ask next"
     )
@@ -133,6 +134,22 @@ class Output(BaseModel):
                 }
             }
         }
+    
+    def get_follow_up_questions_as_list(self) -> List[str]:
+        """Get follow-up questions as a simple list of strings for backward compatibility."""
+        if isinstance(self.recommended_follow_up_questions, list):
+            return self.recommended_follow_up_questions
+        elif isinstance(self.recommended_follow_up_questions, FollowUpQuestions):
+            return self.recommended_follow_up_questions.to_simple_list()
+        else:
+            return []
+    
+    def set_follow_up_questions_from_list(self, questions: List[str]) -> None:
+        """Set follow-up questions from a simple list for backward compatibility."""
+        if questions:
+            self.recommended_follow_up_questions = create_questions_from_list(questions)
+        else:
+            self.recommended_follow_up_questions = []
 
 
 def generate_agent() -> Agent:

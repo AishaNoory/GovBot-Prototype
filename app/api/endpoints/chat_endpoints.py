@@ -14,6 +14,7 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter
 from app.db.database import get_db
 from app.utils.chat_persistence import ChatPersistenceService
 from app.core.orchestrator import generate_agent, Output, Source, Usage, UsageDetails
+from app.models.follow_up_questions import FollowUpQuestions, create_questions_from_list
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ class ChatResponse(BaseModel):
     
     trace_id: Optional[str] = None  # Optional trace ID for monitoring
     
-    recommended_follow_up_questions: List[str] = Field(
+    recommended_follow_up_questions: Union[List[str], FollowUpQuestions] = Field(
         default_factory=list,
         description="Suggested follow-up questions the user might want to ask next"
     )
@@ -106,6 +107,22 @@ class ChatResponse(BaseModel):
                 }
             }
         }
+    
+    def get_follow_up_questions_as_list(self) -> List[str]:
+        """Get follow-up questions as a simple list of strings for backward compatibility."""
+        if isinstance(self.recommended_follow_up_questions, list):
+            return self.recommended_follow_up_questions
+        elif isinstance(self.recommended_follow_up_questions, FollowUpQuestions):
+            return self.recommended_follow_up_questions.to_simple_list()
+        else:
+            return []
+    
+    def set_follow_up_questions_from_list(self, questions: List[str]) -> None:
+        """Set follow-up questions from a simple list for backward compatibility."""
+        if questions:
+            self.recommended_follow_up_questions = create_questions_from_list(questions)
+        else:
+            self.recommended_follow_up_questions = []
 
 class ChatHistoryResponse(BaseModel):
     session_id: str
@@ -226,7 +243,9 @@ async def process_chat(
         # Get usage information
         usage_info = convert_usage(result.usage())
         
-        # Create assistant message object
+        # Create assistant message object with backward compatible follow-up questions
+        follow_up_questions = result.output.get_follow_up_questions_as_list() if hasattr(result.output, 'get_follow_up_questions_as_list') else []
+        
         assistant_message_obj = {
             "session_id": session_id,
             "answer": result.output.answer,
@@ -234,6 +253,7 @@ async def process_chat(
             "confidence": result.output.confidence,
             "retriever_type": result.output.retriever_type,
             "trace_id": trace_id,
+            "recommended_follow_up_questions": follow_up_questions,
             "usage": usage_info.dict() if usage_info else None
         }
         
@@ -252,16 +272,19 @@ async def process_chat(
             logger.error(f"[{trace_id}] Failed to save chat messages for session: {session_id}")
             raise HTTPException(status_code=500, detail="Failed to save chat messages")
         
-        # Return the response
-        return ChatResponse(
+        # Return the response with follow-up questions
+        response = ChatResponse(
             session_id=session_id,
             answer=result.output.answer,
             sources=result.output.sources,
             confidence=result.output.confidence,
             retriever_type=result.output.retriever_type,
             trace_id=trace_id,
+            recommended_follow_up_questions=follow_up_questions,
             usage=usage_info
         )
+        
+        return response
     
     except HTTPException:
         raise
