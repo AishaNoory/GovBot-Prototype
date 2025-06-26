@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-WOR  CMD curl -f http://localhost:8084/health || exit 1DIR /app
+WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -24,7 +24,7 @@ EXPOSE 8084
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:8084/health || exit 1
+  CMD curl -f http://localhost:8080/health || exit 1
 
 # Run the test microservice
 CMD ["python", "-m", "tests.scalability_tests.test_service"]
