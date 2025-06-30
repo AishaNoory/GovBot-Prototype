@@ -15,6 +15,7 @@ from app.db.database import get_db
 from app.utils.chat_persistence import ChatPersistenceService
 from app.core.orchestrator import generate_agent, Output, Source, Usage, UsageDetails
 from app.models.follow_up_questions import FollowUpQuestions, create_questions_from_list
+from app.utils.security import validate_api_key, require_read_permission, require_write_permission, require_delete_permission, APIKeyInfo
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -183,10 +184,12 @@ class ChatHistoryResponse(BaseModel):
 @router.post("/", response_model=ChatResponse)
 async def process_chat(
     request: ChatRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_write_permission)
 ) -> ChatResponse:
     """
     Process a chat message, creating a new session if needed or continuing an existing one.
+    Requires write permission.
     
     Args:
         request: The chat request containing the message, session_id (if continuing), and user data
@@ -296,10 +299,12 @@ async def process_chat(
 @router.get("/{session_id}", response_model=ChatHistoryResponse)
 async def get_chat_history(
     session_id: str = Path(..., description="The ID of the chat session to retrieve"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
 ) -> ChatHistoryResponse:
     """
     Retrieve the history of a chat session.
+    Requires read permission.
     
     Args:
         session_id: The ID of the chat session to retrieve
@@ -353,10 +358,12 @@ async def get_chat_history(
 @router.delete("/{session_id}")
 async def delete_chat(
     session_id: str = Path(..., description="The ID of the chat session to delete"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_delete_permission)
 ) -> Dict[str, str]:
     """
     Delete a chat session and all its messages.
+    Requires delete permission.
     
     Args:
         session_id: The ID of the chat session to delete

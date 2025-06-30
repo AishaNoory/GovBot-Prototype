@@ -1010,3 +1010,290 @@ rsync -avz /path/to/backup/chroma/ ./data/chroma/
 ## License
 
 This project is proprietary and confidential.
+
+# GovStack API
+
+GovStack is a comprehensive document management and AI-powered chat API that provides secure access to government information and services through intelligent conversation and document processing capabilities.
+
+## Features
+
+- **AI-Powered Chat**: Intelligent conversations with government data using advanced language models
+- **Document Management**: Secure upload, storage, and retrieval of documents
+- **Web Crawling**: Automated website crawling and content extraction
+- **API Key Security**: Role-based access control with read, write, and delete permissions
+- **Collection Management**: Organize and manage document collections with statistics
+- **Vector Search**: Advanced semantic search capabilities using ChromaDB
+
+## Quick Start
+
+### Environment Setup
+
+1. Copy the environment configuration:
+```bash
+cp .env.example .env.dev
+```
+
+2. Update the configuration in `.env.dev` with your API keys:
+```bash
+# Required API Keys
+OPENAI_API_KEY="your-openai-api-key-here"
+EXA_API_KEY="your-exa-api-key-here"
+
+# API Security - Change these in production!
+GOVSTACK_API_KEY="your-secure-master-api-key-here"
+GOVSTACK_ADMIN_API_KEY="your-secure-admin-api-key-here"
+```
+
+### Authentication
+
+All API endpoints (except `/` and `/health`) require API key authentication via the `X-API-Key` header:
+
+```bash
+curl -H "X-API-Key: your-api-key-here" http://localhost:5000/api-info
+```
+
+#### API Key Permissions
+
+- **Master Key** (`GOVSTACK_API_KEY`): Full access (read, write, delete)
+- **Admin Key** (`GOVSTACK_ADMIN_API_KEY`): Read and write access
+- Custom keys can be configured with specific permissions
+
+### Core Endpoints
+
+#### Health Check
+```bash
+# Public endpoint - no authentication required
+GET /health
+```
+
+#### API Information
+```bash
+# Get your API key permissions
+GET /api-info
+Headers: X-API-Key: your-api-key-here
+```
+
+### Chat API
+
+#### Start a Conversation
+```bash
+POST /chat/
+Content-Type: application/json
+X-API-Key: your-api-key-here
+
+{
+  "message": "What services does the government provide for business registration?",
+  "session_id": "optional-session-id",
+  "user_id": "user123"
+}
+```
+
+#### Get Chat History
+```bash
+GET /chat/{session_id}
+X-API-Key: your-api-key-here
+```
+
+#### Delete Chat Session
+```bash
+DELETE /chat/{session_id}
+X-API-Key: your-api-key-here
+```
+
+### Document Management
+
+#### Upload Document
+```bash
+POST /documents/
+X-API-Key: your-api-key-here
+Content-Type: multipart/form-data
+
+# Form fields:
+# - file: Document file
+# - description: Optional description
+# - is_public: Boolean (default: false)
+# - collection_id: Optional collection identifier
+```
+
+#### Get Document
+```bash
+GET /documents/{document_id}
+X-API-Key: your-api-key-here
+```
+
+#### List Documents
+```bash
+GET /documents/?skip=0&limit=100
+X-API-Key: your-api-key-here
+```
+
+### Web Crawling
+
+#### Start Website Crawl
+```bash
+POST /crawl/
+Content-Type: application/json
+X-API-Key: your-api-key-here
+
+{
+  "url": "https://example.gov",
+  "depth": 3,
+  "concurrent_requests": 10,
+  "collection_id": "gov-docs"
+}
+```
+
+#### Check Crawl Status
+```bash
+GET /crawl/{task_id}
+X-API-Key: your-api-key-here
+```
+
+#### Fetch Single Webpage
+```bash
+POST /webpages/fetch-webpage/
+Content-Type: application/json
+X-API-Key: your-api-key-here
+
+{
+  "url": "https://example.gov/page",
+  "skip_ssl_verification": false
+}
+```
+
+### Collection Management
+
+#### Get Collection Statistics
+```bash
+GET /collection-stats/{collection_id}
+X-API-Key: your-api-key-here
+```
+
+#### Get All Collections
+```bash
+GET /collection-stats/
+X-API-Key: your-api-key-here
+```
+
+## Environment Variables
+
+### Core Settings
+```bash
+USE_GPU=false                    # Enable GPU acceleration
+DOCKER_RUNTIME=runc             # Docker runtime
+DEV_MODE=true                   # Development mode
+LOG_LEVEL=DEBUG                 # Logging level
+```
+
+### API Keys
+```bash
+OPENAI_API_KEY="sk-..."         # OpenAI API key
+EXA_API_KEY="xxx-xxx-xxx"       # Exa search API key
+GOVSTACK_API_KEY="master-key"   # Master API key (full access)
+GOVSTACK_ADMIN_API_KEY="admin-key" # Admin API key (read/write)
+```
+
+### Database Configuration
+```bash
+POSTGRES_PASSWORD=your-password
+DATABASE_URL=postgresql+asyncpg://postgres:password@postgres-dev:5432/govstackdb
+```
+
+### ChromaDB Configuration
+```bash
+CHROMA_HOST=chroma-dev
+CHROMA_PORT=8000
+CHROMA_USERNAME=your-username
+CHROMA_PASSWORD=your-password
+CHROMA_CLIENT_AUTHN_CREDENTIALS=username:password
+CHROMA_DEV_PORT=8001
+```
+
+### MinIO Configuration
+```bash
+MINIO_ACCESS_KEY=your-access-key
+MINIO_SECRET_KEY=your-secret-key
+MINIO_BUCKET_NAME=govstack-docs
+MINIO_DEV_PORT=9001
+MINIO_CONSOLE_DEV_PORT=9091
+```
+
+## Security
+
+### API Key Authentication
+- All endpoints require valid API keys via `X-API-Key` header
+- Different permission levels: read, write, delete
+- Keys are validated against environment variables
+
+### Permission Levels
+- **Read**: Access to GET endpoints, chat history, document retrieval
+- **Write**: Document upload, chat interactions, crawl operations
+- **Delete**: Resource deletion capabilities
+
+### Best Practices
+1. Use different API keys for different applications
+2. Rotate API keys regularly
+3. Store API keys securely (environment variables, secret management)
+4. Monitor API usage through logs
+5. Use HTTPS in production
+
+## Response Formats
+
+### Success Response
+```json
+{
+  "session_id": "uuid",
+  "answer": "Response text",
+  "sources": [...],
+  "confidence": 0.95,
+  "usage": {...}
+}
+```
+
+### Error Response
+```json
+{
+  "detail": "Error message",
+  "status_code": 400
+}
+```
+
+## Development
+
+### Running Locally
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Set up environment
+cp .env.example .env.dev
+
+# Run the application
+python -m app.api.fast_api_app
+```
+
+### Docker Development
+```bash
+# Build and run with docker-compose
+docker-compose up -d
+```
+
+## API Documentation
+
+Once running, visit:
+- Swagger UI: `http://localhost:5000/docs`
+- ReDoc: `http://localhost:5000/redoc`
+
+## Monitoring and Logging
+
+The application uses structured logging with configurable levels. All API requests are logged with trace IDs for debugging.
+
+### Log Levels
+- `DEBUG`: Detailed debugging information
+- `INFO`: General operational messages
+- `WARNING`: Warning messages
+- `ERROR`: Error conditions
+
+## Support
+
+For issues and questions, please check the logs and ensure proper API key configuration.

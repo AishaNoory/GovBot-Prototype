@@ -26,7 +26,8 @@ class TestChatEndpoints:
                 "user_id": "test_user"
             }
             
-            response = await client.post("/chat/", json=payload)
+            headers = {"X-API-Key": "gs-dev-master-key-12345"}
+            response = await client.post("/chat/", json=payload, headers=headers)
             
             assert response.status_code == 200
             data = response.json()
@@ -48,6 +49,35 @@ class TestChatEndpoints:
                 assert isinstance(usage["details"], dict)
     
     @pytest.mark.asyncio
+    async def test_chat_endpoint_missing_api_key(self):
+        """Test chat request without API key"""
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            payload = {
+                "message": "What is the Kenya Film Commission?",
+                "session_id": str(uuid4()),
+                "user_id": "test_user"
+            }
+            
+            response = await client.post("/chat/", json=payload)
+            assert response.status_code == 401
+            assert "API key required" in response.json()["detail"]
+    
+    @pytest.mark.asyncio
+    async def test_chat_endpoint_invalid_api_key(self):
+        """Test chat request with invalid API key"""
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            payload = {
+                "message": "What is the Kenya Film Commission?",
+                "session_id": str(uuid4()),
+                "user_id": "test_user"
+            }
+            
+            headers = {"X-API-Key": "invalid-key"}
+            response = await client.post("/chat/", json=payload, headers=headers)
+            assert response.status_code == 401
+            assert "Invalid API key" in response.json()["detail"]
+    
+    @pytest.mark.asyncio
     async def test_chat_endpoint_missing_message(self):
         """Test chat request with missing message"""
         async with AsyncClient(app=app, base_url="http://test") as client:
@@ -56,7 +86,8 @@ class TestChatEndpoints:
                 "user_id": "test_user"
             }
             
-            response = await client.post("/chat/", json=payload)
+            headers = {"X-API-Key": "gs-dev-master-key-12345"}
+            response = await client.post("/chat/", json=payload, headers=headers)
             assert response.status_code == 422  # Validation error
     
     @pytest.mark.asyncio
@@ -77,13 +108,16 @@ class TestChatEndpoints:
         """Test getting history for non-existent session"""
         async with AsyncClient(app=app, base_url="http://test") as client:
             fake_session_id = str(uuid4())
-            response = await client.get(f"/chat/{fake_session_id}")
+            headers = {"X-API-Key": "gs-dev-master-key-12345"}
+            response = await client.get(f"/chat/{fake_session_id}", headers=headers)
             assert response.status_code == 404
     
     @pytest.mark.asyncio
     async def test_delete_chat_session(self):
         """Test deleting a chat session"""
         async with AsyncClient(app=app, base_url="http://test") as client:
+            headers = {"X-API-Key": "gs-dev-master-key-12345"}
+            
             # First create a chat session
             payload = {
                 "message": "Test message",
@@ -91,17 +125,17 @@ class TestChatEndpoints:
                 "user_id": "test_user"
             }
             
-            create_response = await client.post("/chat/", json=payload)
+            create_response = await client.post("/chat/", json=payload, headers=headers)
             assert create_response.status_code == 200
             
             session_id = create_response.json()["session_id"]
             
             # Delete the session
-            delete_response = await client.delete(f"/chat/{session_id}")
+            delete_response = await client.delete(f"/chat/{session_id}", headers=headers)
             assert delete_response.status_code == 200
             
             # Verify it's deleted
-            get_response = await client.get(f"/chat/{session_id}")
+            get_response = await client.get(f"/chat/{session_id}", headers=headers)
             assert get_response.status_code == 404
 
 
@@ -180,7 +214,7 @@ class TestHealthEndpoints:
     
     @pytest.mark.asyncio
     async def test_health_endpoint(self):
-        """Test health check endpoint"""
+        """Test health check endpoint - should work without API key"""
         async with AsyncClient(app=app, base_url="http://test") as client:
             response = await client.get("/health")
             assert response.status_code == 200
@@ -189,10 +223,44 @@ class TestHealthEndpoints:
     
     @pytest.mark.asyncio
     async def test_root_endpoint(self):
-        """Test root endpoint"""
+        """Test root endpoint - should work without API key"""
         async with AsyncClient(app=app, base_url="http://test") as client:
             response = await client.get("/")
             assert response.status_code == 200
+
+
+class TestAPIKeySecurity:
+    """Test API key security functionality"""
+    
+    @pytest.mark.asyncio
+    async def test_api_info_endpoint(self):
+        """Test API info endpoint with valid key"""
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            headers = {"X-API-Key": "gs-dev-master-key-12345"}
+            response = await client.get("/api-info", headers=headers)
+            assert response.status_code == 200
+            data = response.json()
+            assert data["api_key_name"] == "master"
+            assert "read" in data["permissions"]
+            assert "write" in data["permissions"]
+    
+    @pytest.mark.asyncio
+    async def test_admin_key_permissions(self):
+        """Test admin key has correct permissions"""
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            headers = {"X-API-Key": "gs-dev-admin-key-67890"}
+            response = await client.get("/api-info", headers=headers)
+            assert response.status_code == 200
+            data = response.json()
+            assert data["api_key_name"] == "admin"
+            assert "admin" in data["permissions"]
+    
+    @pytest.mark.asyncio
+    async def test_protected_endpoint_without_key(self):
+        """Test that protected endpoints require API key"""
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            response = await client.get("/documents/")
+            assert response.status_code == 401
 
 
 class TestValidation:
