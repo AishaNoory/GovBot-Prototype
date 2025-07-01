@@ -14,7 +14,6 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter
 from app.db.database import get_db
 from app.utils.chat_persistence import ChatPersistenceService
 from app.core.orchestrator import generate_agent, Output, Source, Usage, UsageDetails
-from app.models.follow_up_questions import FollowUpQuestions, create_questions_from_list
 from app.utils.security import validate_api_key, require_read_permission, require_write_permission, require_delete_permission, APIKeyInfo
 
 # Configure logging
@@ -39,40 +38,19 @@ class ChatRequest(BaseModel):
             }
         }
 
-class ChatResponse(BaseModel):
-    session_id: str
-    answer: str = Field(
-        description="The comprehensive answer to the user's question",
-        min_length=1
+class ChatResponse(Output):
+    """
+    Chat response model that extends the Output model with chat-specific fields.
+    """
+    session_id: str = Field(
+        description="Unique identifier for the chat session"
     )
     
-    sources: List[Source] = Field(
-        description="List of sources that provided information for the answer",
-        default_factory=list
-    )
-    
-    confidence: float = Field(
-        description="Confidence score between 0.0 and 1.0 indicating reliability of the answer",
-        ge=0.0,
-        le=1.0
-    )
-    
-    retriever_type: str = Field(
-        description="Identifier for the knowledge collection that was used for retrieval"
-    )
-    
-    trace_id: Optional[str] = None  # Optional trace ID for monitoring
-    
-    recommended_follow_up_questions: Union[List[str], FollowUpQuestions] = Field(
-        default_factory=list,
-        description="Suggested follow-up questions the user might want to ask next"
-    )
-    
-    usage: Optional[Usage] = Field(
+    trace_id: Optional[str] = Field(
         default=None,
-        description="Token usage information from the model response"
+        description="Optional trace ID for monitoring and debugging"
     )
-    
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -88,11 +66,6 @@ class ChatResponse(BaseModel):
                 "confidence": 0.92,
                 "retriever_type": "brs",
                 "trace_id": "7fa85f64-5717-4562-b3fc-2c963f66afa7",
-                "recommended_follow_up_questions": [
-                    "What are the fees for business registration?",
-                    "How long does the business registration process take?",
-                    "What documents are required for business registration?"
-                ],
                 "usage": {
                     "requests": 1,
                     "request_tokens": 891,
@@ -105,25 +78,19 @@ class ChatResponse(BaseModel):
                         "rejected_prediction_tokens": 0,
                         "cached_tokens": 0
                     }
-                }
+                },
+                "recommended_follow_up_questions": [
+                    {
+                        "question": "What are the funding opportunities available for filmmakers in Kenya?",
+                        "relevance_score": 0.85
+                    },
+                    {
+                        "question": "How does the Kenya Film Commission support local filmmakers?",
+                        "relevance_score": 0.90
+                    }
+                ]
             }
         }
-    
-    def get_follow_up_questions_as_list(self) -> List[str]:
-        """Get follow-up questions as a simple list of strings for backward compatibility."""
-        if isinstance(self.recommended_follow_up_questions, list):
-            return self.recommended_follow_up_questions
-        elif isinstance(self.recommended_follow_up_questions, FollowUpQuestions):
-            return self.recommended_follow_up_questions.to_simple_list()
-        else:
-            return []
-    
-    def set_follow_up_questions_from_list(self, questions: List[str]) -> None:
-        """Set follow-up questions from a simple list for backward compatibility."""
-        if questions:
-            self.recommended_follow_up_questions = create_questions_from_list(questions)
-        else:
-            self.recommended_follow_up_questions = []
 
 class ChatHistoryResponse(BaseModel):
     session_id: str
@@ -246,9 +213,7 @@ async def process_chat(
         # Get usage information
         usage_info = convert_usage(result.usage())
         
-        # Create assistant message object with backward compatible follow-up questions
-        follow_up_questions = result.output.get_follow_up_questions_as_list() if hasattr(result.output, 'get_follow_up_questions_as_list') else []
-        
+        # Create assistant message object with empty follow-up questions
         assistant_message_obj = {
             "session_id": session_id,
             "answer": result.output.answer,
@@ -256,7 +221,7 @@ async def process_chat(
             "confidence": result.output.confidence,
             "retriever_type": result.output.retriever_type,
             "trace_id": trace_id,
-            "recommended_follow_up_questions": follow_up_questions,
+            "recommended_follow_up_questions": [],
             "usage": usage_info.dict() if usage_info else None
         }
         
@@ -275,7 +240,7 @@ async def process_chat(
             logger.error(f"[{trace_id}] Failed to save chat messages for session: {session_id}")
             raise HTTPException(status_code=500, detail="Failed to save chat messages")
         
-        # Return the response with follow-up questions
+        # Return the response with empty follow-up questions
         response = ChatResponse(
             session_id=session_id,
             answer=result.output.answer,
@@ -283,7 +248,7 @@ async def process_chat(
             confidence=result.output.confidence,
             retriever_type=result.output.retriever_type,
             trace_id=trace_id,
-            recommended_follow_up_questions=follow_up_questions,
+            recommended_follow_up_questions=[],
             usage=usage_info
         )
         

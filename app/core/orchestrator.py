@@ -9,7 +9,6 @@ from typing import List, Optional, Any, Dict, Union
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_core import to_jsonable_python
 from app.core.rag.tool_loader import collection_dict
-from app.models.follow_up_questions import FollowUpQuestions, create_questions_from_list
 import yaml
 import os
 
@@ -62,6 +61,20 @@ class Usage(BaseModel):
     details: UsageDetails = Field(description="Additional usage details")
 
 
+class FollowUpQuestion(BaseModel):
+    """Represents a recommended follow-up question."""
+    question: str = Field(
+        description="The recommended follow-up question for the user",
+        min_length=1
+    )
+    
+    relevance_score: Optional[float] = Field(
+        default=None,
+        description="Relevance score indicating how closely the question relates to the user's original query",
+        ge=0.0,
+        le=1.0
+    )
+
 class Output(BaseModel):
     """
     Structured output format for agent responses with source attribution and metadata.
@@ -86,16 +99,16 @@ class Output(BaseModel):
         description="Identifier for the knowledge collection that was used for retrieval"
     )
     
-    recommended_follow_up_questions: List[FollowUpQuestions] = Field(
-        default_factory=list,
-        description="Suggested follow-up questions the user might want to ask next"
-    )
-    
     usage: Optional[Usage] = Field(
         default=None,
         description="Token usage information from the model response"
     )
-    
+
+    recommended_follow_up_questions: List[FollowUpQuestion] = Field(
+        default_factory=list,
+        description="List of recommended follow-up questions based on the user's query"
+    )
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -114,11 +127,6 @@ class Output(BaseModel):
                 ],
                 "confidence": 0.95,
                 "retriever_type": "kfc",
-                "recommended_follow_up_questions": [
-                    "What financial incentives does the Kenya Film Commission offer?",
-                    "How can I register a film production company in Kenya?",
-                    "What are the film shooting requirements in Kenya?"
-                ],
                 "usage": {
                     "requests": 1,
                     "request_tokens": 891,
@@ -131,28 +139,22 @@ class Output(BaseModel):
                         "rejected_prediction_tokens": 0,
                         "cached_tokens": 0
                     }
-                }
+                },
+                "recommended_follow_up_questions": [
+                    {
+                        "question": "What are the funding opportunities available for filmmakers in Kenya?",
+                        "relevance_score": 0.85
+                    },
+                    {
+                        "question": "How does the Kenya Film Commission support local filmmakers?",
+                        "relevance_score": 0.90
+                    }
+                ]
             }
         }
-    
-    def get_follow_up_questions_as_list(self) -> List[str]:
-        """Get follow-up questions as a simple list of strings for backward compatibility."""
-        if isinstance(self.recommended_follow_up_questions, list):
-            return self.recommended_follow_up_questions
-        elif isinstance(self.recommended_follow_up_questions, FollowUpQuestions):
-            return self.recommended_follow_up_questions.to_simple_list()
-        else:
-            return []
-    
-    def set_follow_up_questions_from_list(self, questions: List[str]) -> None:
-        """Set follow-up questions from a simple list for backward compatibility."""
-        if questions:
-            self.recommended_follow_up_questions = create_questions_from_list(questions)
-        else:
-            self.recommended_follow_up_questions = []
 
 
-def generate_agent() -> Agent:
+def generate_agent() -> Agent[None, Output]:
     """
     Generate an agent for the OpenAI model with the specified system prompt and retrievers.
     
@@ -163,10 +165,9 @@ def generate_agent() -> Agent:
     collection_yml = yaml.dump(collection_dict, default_flow_style=False)
     # Initialize the agent with the system prompt and retrievers
     agent = Agent(
-        model = 'openai:gpt-4o',
-        instructions=SYSTEM_PROMPT,  
+        model='openai:gpt-4o',
+        system_prompt=SYSTEM_PROMPT.format(collections=collection_yml),
         tools=tools,
-        verbose=True,
         output_type=Output
     )
     
@@ -179,14 +180,6 @@ if __name__ == "__main__":
 
     
     agent = generate_agent()
-
-
-    agent = Agent(
-        model = 'openai:gpt-4o',
-        instructions=SYSTEM_PROMPT,  
-        verbose=True,
-        output_type=Output
-    )
 
     # Example 1: Starting a new conversation
     result1 = agent.run_sync(

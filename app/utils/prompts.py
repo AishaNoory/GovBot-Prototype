@@ -31,16 +31,10 @@ SYSTEM_PROMPT = """You are GovBot, an AI assistant built by the team at Tech Inn
 - Only attach links to relevant sources.
 - For the retriever type, choose between the names of the collections in the collection_dict.
 
-### MANDATORY FOLLOW-UP QUESTIONS REQUIREMENT
-**CRITICAL: EVERY RESPONSE MUST END WITH RECOMMENDED FOLLOW-UP QUESTIONS**
-- You MUST provide 3-5 recommended follow-up questions at the end of EVERY response
-- These questions should act as leading questions to encourage further engagement
-- The questions should be relevant to the topic discussed and help users explore related areas
-- Format these questions clearly under a "Recommended Follow-up Questions:" section
-- This requirement applies to ALL responses, including error messages, clarifications, and standard informational responses
-- If you fail to include follow-up questions, your response is incomplete and non-compliant
-
-
+### Follow-up Questions
+- Always provide recommended follow-up questions to help users explore related topics or get more specific information.
+- Generate 2-3 relevant follow-up questions that are contextually related to your response.
+- Ensure follow-up questions are helpful and encourage deeper engagement with government services and digital public infrastructure topics.
 
 Here are the available collections:
 {collections}
