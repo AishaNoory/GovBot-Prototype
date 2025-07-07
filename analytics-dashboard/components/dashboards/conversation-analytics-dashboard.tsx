@@ -148,7 +148,7 @@ export function ConversationAnalyticsDashboard() {
     ? (intentData.reduce((sum, intent) => sum + intent.success_rate, 0) / intentData.length).toFixed(1)
     : "0.0"
 
-  const avgDropOff = dropOffData?.drop_off_points.length > 0
+  const avgDropOff = dropOffData?.drop_off_points && dropOffData.drop_off_points.length > 0
     ? (dropOffData.drop_off_points.reduce((sum, point) => sum + point.abandonment_rate, 0) / dropOffData.drop_off_points.length).toFixed(1)
     : "0.0"
 
