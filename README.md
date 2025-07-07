@@ -17,6 +17,7 @@ GovStack is an intelligent document management and citizen assistance system des
 - **MinIO integration** for scalable object storage
 - **ChromaDB** for vector database capabilities with authentication
 - **PostgreSQL** for relational data storage with automated backups
+- **Metabase** for business intelligence and data visualization
 - **Docker-based deployment** for production and development environments
 - **Fully containerized architecture** for easy deployment across environments
 
@@ -124,6 +125,12 @@ This diagram illustrates the core components and data flow of the GovStack syste
   - Production Port: 5432
   - Development Port: 5433
   - Default credentials: postgres/postgres (unless changed in .env)
+
+- **Metabase Analytics**:
+  - Web Interface: http://localhost:3000
+  - API Health Check: http://localhost:3000/api/health
+  - Database: Uses PostgreSQL `metabase` database for application data
+  - Setup: Complete initial setup wizard on first access
 
 - **Testing Infrastructure**:
   - Test Service UI: http://localhost:8084 (when running tests)
