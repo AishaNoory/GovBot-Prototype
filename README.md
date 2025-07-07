@@ -126,6 +126,18 @@ This diagram illustrates the core components and data flow of the GovStack syste
   - Development Port: 5433
   - Default credentials: postgres/postgres (unless changed in .env)
 
+- **Analytics Module**:
+  - Production API: http://localhost:8005
+  - Development API: http://localhost:8006
+  - API Documentation: http://localhost:8005/docs
+  - Health Check: http://localhost:8005/analytics/health
+
+- **Analytics Dashboard**:
+  - Production Web Interface: http://localhost:3001
+  - Development Web Interface: http://localhost:3002
+  - Health Check: http://localhost:3001/api/health (production) or http://localhost:3002/api/health (development)
+  - Real-time analytics visualization and business intelligence
+
 - **Metabase Analytics**:
   - Web Interface: http://localhost:3000
   - API Health Check: http://localhost:3000/api/health
@@ -507,6 +519,8 @@ GovStack is designed to be deployed easily using Docker in various environments.
 - 20GB+ storage space for the database and document storage
 - Port 5000 available for the API service
 - Ports 8050, 9000, 9001, and 5432 available for supporting services
+- Ports 8005-8006 available for analytics services
+- Ports 3001-3002 available for analytics dashboard
 
 ### Cloud Deployment Options
 

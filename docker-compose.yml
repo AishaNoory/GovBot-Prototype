@@ -134,6 +134,28 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  analytics-dashboard:
+    build:
+      context: ./analytics-dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "${ANALYTICS_DASHBOARD_PORT:-3001}:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      - ANALYTICS_API_URL=http://analytics:8005
+    depends_on:
+      - analytics
+    networks:
+      - govstack-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
   metabase:
     image: metabase/metabase:latest
     container_name: metabase
