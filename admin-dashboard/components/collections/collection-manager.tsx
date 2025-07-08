@@ -1,9 +1,10 @@
 "use client"
 
 import { useState } from 'react'
+import { Collection } from '@/lib/types'
 
 export function CollectionManager() {
-  const [collections, setCollections] = useState([])
+  const [collections, setCollections] = useState<Collection[]>([])
   const [newCollectionName, setNewCollectionName] = useState('')
   const [newCollectionDescription, setNewCollectionDescription] = useState('')
   const [isCreating, setIsCreating] = useState(false)
@@ -20,12 +21,14 @@ export function CollectionManager() {
       // For now, just simulate the creation
       await new Promise(resolve => setTimeout(resolve, 1000))
       
-      const newCollection = {
+      const newCollection: Collection = {
         id: Date.now().toString(),
         name: newCollectionName,
         description: newCollectionDescription,
         type: 'mixed' as const,
         created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        created_by: 'admin', // TODO: Replace with actual user ID
         document_count: 0,
         webpage_count: 0,
         total_size: 0

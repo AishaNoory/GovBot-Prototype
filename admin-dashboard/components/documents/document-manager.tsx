@@ -5,18 +5,24 @@ import { useState } from 'react'
 export function DocumentManager() {
   const [documents, setDocuments] = useState([])
   const [isUploading, setIsUploading] = useState(false)
+  const [collectionId, setCollectionId] = useState('')
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
     if (!files || files.length === 0) return
+    
+    if (!collectionId.trim()) {
+      alert('Collection ID is required')
+      return
+    }
 
     setIsUploading(true)
     
     try {
-      // Here you would implement the actual upload logic
+      // Here you would implement the actual upload logic with the required collection ID
       // For now, just simulate the upload
       await new Promise(resolve => setTimeout(resolve, 1000))
-      console.log('Files uploaded:', files)
+      console.log('Files uploaded:', files, 'Collection ID:', collectionId)
     } catch (error) {
       console.error('Upload failed:', error)
     } finally {
@@ -47,6 +53,38 @@ export function DocumentManager() {
         </div>
       </div>
 
+      {/* Collection ID input */}
+      <div className="mb-4">
+        <label className="block text-sm font-medium mb-2">Collection ID</label>
+        <input
+          type="text"
+          value={collectionId}
+          onChange={(e) => setCollectionId(e.target.value)}
+          placeholder="Enter collection ID"
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          required
+        />
+        <p className="text-xs text-red-500 mt-1">* Required for document organization</p>
+      </div>
+
+      {/* Collection ID input */}
+      <div className="rounded-lg border bg-card p-6 mb-4">
+        <h3 className="text-lg font-semibold mb-4">Document Collection</h3>
+        <div>
+          <label className="block text-sm font-medium mb-2">Collection ID</label>
+          <input
+            type="text"
+            value={collectionId}
+            onChange={(e) => setCollectionId(e.target.value)}
+            placeholder="Enter collection ID"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            required
+            disabled={isUploading}
+          />
+          <p className="text-xs text-red-500 mt-1">* Required for organizing documents</p>
+        </div>
+      </div>
+
       {/* Upload area */}
       <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
         <div className="space-y-4">
@@ -58,6 +96,7 @@ export function DocumentManager() {
           <div>
             <h3 className="text-lg font-medium">Drag and drop files here</h3>
             <p className="text-sm text-muted-foreground">or click the button above to browse</p>
+            <p className="text-sm font-medium text-red-500">Collection ID is required before upload</p>
           </div>
           <div className="flex justify-center space-x-4 text-xs text-muted-foreground">
             <span>PDF</span>

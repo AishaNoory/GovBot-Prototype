@@ -1,33 +1,41 @@
 "use client"
 
 import { useState } from 'react'
+import { CrawlTask } from '@/lib/types'
 
 export function WebsiteManager() {
   const [crawlUrl, setCrawlUrl] = useState('')
   const [crawlDepth, setCrawlDepth] = useState(3)
+  const [collectionId, setCollectionId] = useState('')
   const [isCrawling, setIsCrawling] = useState(false)
-  const [crawlJobs, setCrawlJobs] = useState([])
+  const [crawlJobs, setCrawlJobs] = useState<CrawlTask[]>([])
 
   const handleStartCrawl = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!crawlUrl.trim()) return
+    if (!collectionId.trim()) {
+      alert('Collection ID is required')
+      return
+    }
 
     setIsCrawling(true)
     
     try {
-      // Here you would implement the actual crawl logic
+      // Here you would implement the actual crawl logic with the required collection ID
       // For now, just simulate the crawl
       await new Promise(resolve => setTimeout(resolve, 1000))
-      console.log('Crawl started for:', crawlUrl)
+      console.log('Crawl started for:', crawlUrl, 'Collection ID:', collectionId)
       
       // Add to crawl jobs list
-      const newJob = {
-        id: Date.now(),
-        url: crawlUrl,
-        depth: crawlDepth,
+      const newJob: CrawlTask = {
+        task_id: Date.now().toString(),
         status: 'running',
-        startTime: new Date().toISOString(),
-        pagesFound: 0
+        seed_urls: [crawlUrl],
+        urls_crawled: 0,
+        total_urls_queued: 0,
+        start_time: new Date().toISOString(),
+        finished: false,
+        collection_id: collectionId // Add collection_id to the job
       }
       setCrawlJobs(prev => [newJob, ...prev])
       setCrawlUrl('')
@@ -77,6 +85,20 @@ export function WebsiteManager() {
                 <option value={5}>5 levels</option>
               </select>
             </div>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium mb-2">Collection ID</label>
+            <input
+              type="text"
+              value={collectionId}
+              onChange={(e) => setCollectionId(e.target.value)}
+              placeholder="Enter collection ID"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              required
+              disabled={isCrawling}
+            />
+            <p className="text-xs text-red-500 mt-1">* Required for organizing crawled webpages</p>
           </div>
           
           <div className="flex items-center space-x-4">

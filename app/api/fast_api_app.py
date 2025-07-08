@@ -186,7 +186,7 @@ async def upload_document(
     file: UploadFile = File(...),
     description: str = Form(None),
     is_public: bool = Form(False),
-    collection_id: Optional[str] = Form(None),
+    collection_id: str = Form(...),
     db: AsyncSession = Depends(get_db),
     api_key_info: APIKeyInfo = Depends(require_write_permission)
 ):
@@ -198,7 +198,7 @@ async def upload_document(
         file: The file to upload
         description: Optional description of the document
         is_public: Whether the document should be publicly accessible
-        collection_id: Identifier for grouping documents
+        collection_id: Required identifier for grouping documents
         db: Database session
         
     Returns:
@@ -213,10 +213,8 @@ async def upload_document(
         file_content = await file.read()
         file_size = len(file_content)
         
-        # Prepare MinIO metadata
-        minio_metadata = None
-        if collection_id:
-            minio_metadata = {"collection_id": collection_id}
+        # Prepare MinIO metadata with required collection_id
+        minio_metadata = {"collection_id": collection_id}
         
         # Upload to MinIO
         minio_client.upload_file(
@@ -378,7 +376,7 @@ class CrawlWebsiteRequest(BaseModel):
     concurrent_requests: int = Field(default=10, ge=1, le=50)
     follow_external: bool = Field(default=False)
     strategy: str = Field(default="breadth_first", pattern="^(breadth_first|depth_first)$")
-    collection_id: Optional[str] = Field(default=None, description="Identifier for grouping crawl jobs")
+    collection_id: str = Field(..., description="Required identifier for grouping crawl jobs")
     
 class WebpageResponse(BaseModel):
     """Response model for webpage data."""
@@ -388,7 +386,7 @@ class WebpageResponse(BaseModel):
     crawl_depth: int
     last_crawled: Optional[str] = None
     status_code: Optional[int] = None
-    collection_id: Optional[str] = None
+    collection_id: str
     
 class WebpageLinkResponse(BaseModel):
     """Response model for webpage link data."""
@@ -488,10 +486,9 @@ async def start_crawl(
                     "finished": True
                 })
                 
-                # Start background indexing for the collection if a collection_id was provided
-                if request.collection_id:
-                    logger.info(f"Crawl completed, starting background indexing for collection '{request.collection_id}'")
-                    start_background_indexing(request.collection_id)
+                # Start background indexing for the collection
+                logger.info(f"Crawl completed, starting background indexing for collection '{request.collection_id}'")
+                start_background_indexing(request.collection_id)
                 
             except Exception as e:
                 logger.error(f"Error in background crawl task: {str(e)}")
