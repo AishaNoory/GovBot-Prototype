@@ -18,8 +18,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from app.utils.chat_event_service import ChatEventService
 
 async def cleanup_events(hours_old: int = 24, dry_run: bool = False):
@@ -41,7 +40,7 @@ async def cleanup_events(hours_old: int = 24, dry_run: bool = False):
     
     # Create engine and session
     engine = create_async_engine(database_url, echo=False)
-    async_session = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async_session = async_sessionmaker(engine, expire_on_commit=False)
     
     try:
         async with async_session() as session:
@@ -76,7 +75,7 @@ async def get_event_statistics():
         database_url = database_url.replace("localhost", "127.0.0.1")
 
     engine = create_async_engine(database_url, echo=False)
-    async_session = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async_session = async_sessionmaker(engine, expire_on_commit=False)
     
     try:
         async with async_session() as session:

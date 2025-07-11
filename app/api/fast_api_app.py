@@ -8,6 +8,7 @@ load_dotenv()
 
 import os
 import logging
+from io import BytesIO
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone, timedelta
@@ -218,9 +219,12 @@ async def upload_document(
         # Prepare MinIO metadata with required collection_id
         minio_metadata = {"collection_id": collection_id}
         
+        # Convert bytes to file-like object for MinIO
+        file_obj = BytesIO(file_content)
+        
         # Upload to MinIO
         minio_client.upload_file(
-            file_obj=file_content,
+            file_obj=file_obj,
             object_name=object_name,
             content_type=file.content_type or "application/octet-stream",
             metadata=minio_metadata  # Pass metadata here
