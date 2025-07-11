@@ -29,7 +29,7 @@ from app.db.models.chat import Chat, ChatMessage, Base as ChatBase
 from app.db.models.chat_event import ChatEvent, Base as ChatEventBase
 from app.core.crawlers.web_crawler import crawl_website
 from app.core.crawlers.utils import get_page_as_markdown
-from app.core.rag.indexer import extract_text_batch, get_collection_stats, start_background_indexing
+from app.core.rag.indexer import extract_text_batch, get_collection_stats, start_background_indexing, start_background_document_indexing
 from app.core.orchestrator import generate_agent
 from app.utils.security import add_api_key_to_docs, validate_api_key, require_read_permission, require_write_permission, require_delete_permission, APIKeyInfo
 
@@ -186,6 +186,7 @@ async def api_info(api_key_info: APIKeyInfo = Depends(validate_api_key)):
 # Document endpoints - Updated with security
 @document_router.post("/", status_code=201)
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     description: str = Form(None),
     is_public: bool = Form(False),
@@ -245,6 +246,9 @@ async def upload_document(
         db.add(document)
         await db.commit()
         await db.refresh(document)
+        
+        # Start background indexing for the uploaded document
+        background_tasks.add_task(start_background_document_indexing, collection_id)
         
         # Generate access URL
         access_url = minio_client.get_presigned_url(object_name)
