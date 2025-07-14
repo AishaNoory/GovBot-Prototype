@@ -339,6 +339,42 @@ async def list_documents(
         logger.error(f"Error listing documents: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error listing documents: {str(e)}")
 
+@document_router.get("/collection/{collection_id}")
+async def list_documents_by_collection(
+    collection_id: str,
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
+):
+    """
+    List documents in a specific collection with pagination.
+    Requires read permission.
+    
+    Args:
+        collection_id: The collection ID to filter by
+        skip: Number of documents to skip (for pagination)
+        limit: Maximum number of documents to return
+        db: Database session
+        
+    Returns:
+        List of document metadata for the specified collection
+    """
+    try:
+        from sqlalchemy import select
+        
+        # Query documents by collection with pagination
+        query = select(Document).where(Document.collection_id == collection_id).offset(skip).limit(limit)
+        result = await db.execute(query)
+        documents = result.scalars().all()
+        
+        # Convert to dict representation
+        return [doc.to_dict() for doc in documents]
+    
+    except Exception as e:
+        logger.error(f"Error listing documents for collection {collection_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error listing documents for collection: {str(e)}")
+
 @document_router.delete("/{document_id}")
 async def delete_document(
     document_id: int,
@@ -377,6 +413,30 @@ async def delete_document(
     except Exception as e:
         logger.error(f"Error deleting document: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error deleting document: {str(e)}")
+
+# Collection Management Models
+class CreateCollectionRequest(BaseModel):
+    """Request model for creating a collection."""
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    type: str = Field(default="mixed", pattern="^(documents|webpages|mixed)$")
+
+class UpdateCollectionRequest(BaseModel):
+    """Request model for updating a collection."""
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    type: Optional[str] = Field(None, pattern="^(documents|webpages|mixed)$")
+
+class CollectionResponse(BaseModel):
+    """Response model for collection data."""
+    id: str
+    name: str
+    description: Optional[str] = None
+    type: str
+    created_at: str
+    updated_at: str
+    document_count: int
+    webpage_count: int
 
 # Web Crawler API Models
 class CrawlWebsiteRequest(BaseModel):
@@ -433,6 +493,18 @@ class CollectionTextRequest(BaseModel):
     collection_id: str
     hours_ago: Optional[int] = 24
     output_format: str = Field(default="text", pattern="^(text|json|markdown)$")
+
+# Simple in-memory collection storage (should be replaced with database model)
+collections_storage = {
+    "default": {
+        "id": "default",
+        "name": "Default Collection",
+        "description": "Default collection for uncategorized content",
+        "type": "mixed",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
+}
 
 # In-memory storage for background task status
 crawl_tasks = {}
@@ -806,6 +878,182 @@ async def extract_texts_from_collection(
     except Exception as e:
         logger.error(f"Error extracting texts: {e}")
         raise HTTPException(status_code=500, detail=f"Error extracting texts: {str(e)}")
+
+# Collection Management Endpoints
+@collection_router.post("/", response_model=CollectionResponse)
+async def create_collection(
+    request: CreateCollectionRequest,
+    api_key_info: APIKeyInfo = Depends(require_write_permission)
+):
+    """
+    Create a new collection.
+    Requires write permission.
+    
+    Args:
+        request: Collection creation data
+        
+    Returns:
+        Created collection data
+    """
+    try:
+        import uuid
+        collection_id = str(uuid.uuid4())
+        current_time = datetime.now(timezone.utc).isoformat()
+        
+        collection_data = {
+            "id": collection_id,
+            "name": request.name,
+            "description": request.description,
+            "type": request.type,
+            "created_at": current_time,
+            "updated_at": current_time
+        }
+        
+        collections_storage[collection_id] = collection_data
+        
+        # Add counts (would come from database queries in real implementation)
+        response_data = collection_data.copy()
+        response_data.update({
+            "document_count": 0,
+            "webpage_count": 0
+        })
+        
+        return response_data
+    
+    except Exception as e:
+        logger.error(f"Error creating collection: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error creating collection: {str(e)}")
+
+@collection_router.get("/collections", response_model=List[CollectionResponse])
+async def list_collections(
+    api_key_info: APIKeyInfo = Depends(require_read_permission),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    List all collections with counts.
+    Requires read permission.
+    
+    Returns:
+        List of all collections with document and webpage counts
+    """
+    try:
+        from sqlalchemy import select, func
+        
+        collections = []
+        for collection_id, collection_data in collections_storage.items():
+            # Get document count for this collection
+            doc_query = select(func.count(Document.id)).where(Document.collection_id == collection_id)
+            doc_result = await db.execute(doc_query)
+            doc_count = doc_result.scalar() or 0
+            
+            # Get webpage count for this collection  
+            webpage_query = select(func.count(Webpage.id)).where(Webpage.collection_id == collection_id)
+            webpage_result = await db.execute(webpage_query)
+            webpage_count = webpage_result.scalar() or 0
+            
+            response_data = collection_data.copy()
+            response_data.update({
+                "document_count": doc_count,
+                "webpage_count": webpage_count
+            })
+            collections.append(response_data)
+        
+        return collections
+    
+    except Exception as e:
+        logger.error(f"Error listing collections: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error listing collections: {str(e)}")
+
+@collection_router.put("/{collection_id}", response_model=CollectionResponse) 
+async def update_collection(
+    collection_id: str,
+    request: UpdateCollectionRequest,
+    api_key_info: APIKeyInfo = Depends(require_write_permission),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update an existing collection.
+    Requires write permission.
+    
+    Args:
+        collection_id: ID of the collection to update
+        request: Collection update data
+        
+    Returns:
+        Updated collection data
+    """
+    try:
+        if collection_id not in collections_storage:
+            raise HTTPException(status_code=404, detail="Collection not found")
+        
+        collection_data = collections_storage[collection_id].copy()
+        
+        # Update fields that were provided
+        if request.name is not None:
+            collection_data["name"] = request.name
+        if request.description is not None:
+            collection_data["description"] = request.description
+        if request.type is not None:
+            collection_data["type"] = request.type
+        
+        collection_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        collections_storage[collection_id] = collection_data
+        
+        # Add counts
+        from sqlalchemy import select, func
+        doc_query = select(func.count(Document.id)).where(Document.collection_id == collection_id)
+        doc_result = await db.execute(doc_query)
+        doc_count = doc_result.scalar() or 0
+        
+        webpage_query = select(func.count(Webpage.id)).where(Webpage.collection_id == collection_id)
+        webpage_result = await db.execute(webpage_query)
+        webpage_count = webpage_result.scalar() or 0
+        
+        response_data = collection_data.copy()
+        response_data.update({
+            "document_count": doc_count,
+            "webpage_count": webpage_count
+        })
+        
+        return response_data
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating collection: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error updating collection: {str(e)}")
+
+@collection_router.delete("/{collection_id}")
+async def delete_collection(
+    collection_id: str,
+    api_key_info: APIKeyInfo = Depends(require_delete_permission)
+):
+    """
+    Delete a collection.
+    Requires delete permission.
+    
+    Args:
+        collection_id: ID of the collection to delete
+        
+    Returns:
+        Confirmation message
+    """
+    try:
+        if collection_id not in collections_storage:
+            raise HTTPException(status_code=404, detail="Collection not found")
+        
+        if collection_id == "default":
+            raise HTTPException(status_code=400, detail="Cannot delete default collection")
+        
+        del collections_storage[collection_id]
+        
+        return {"message": f"Collection {collection_id} deleted successfully"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting collection: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error deleting collection: {str(e)}")
 
 @collection_router.get("/{collection_id}", response_model=Dict[str, Any])
 async def get_collection_statistics(

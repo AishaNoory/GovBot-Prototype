@@ -903,15 +903,18 @@ print(f"Total users: {demographics['total_users']}")
 ### cURL Examples
 ```bash
 # Get user demographics
-curl -X GET "http://localhost:8005/analytics/user/demographics?start_date=2024-01-01T00:00:00Z&end_date=2024-01-31T23:59:59Z"
+curl -X GET "http://localhost:8005/analytics/user/demographics?start_date=2024-01-01T00:00:00Z&end_date=2024-01-31T23:59:59Z" \
+  -H "X-API-Key: your-api-key-here"
 
 # Get traffic metrics
-curl -X GET "http://localhost:8005/analytics/usage/traffic?start_date=2024-01-01T00:00:00Z"
+curl -X GET "http://localhost:8005/analytics/usage/traffic?start_date=2024-01-01T00:00:00Z" \
+  -H "X-API-Key: your-api-key-here"
 
 # Get ROI metrics
-curl -X GET "http://localhost:8005/analytics/business/roi"
+curl -X GET "http://localhost:8005/analytics/business/roi" \
+  -H "X-API-Key: your-api-key-here"
 
-# Health check
+# Health check (no API key required)
 curl -X GET "http://localhost:8005/analytics/health"
 ```
 
@@ -928,7 +931,12 @@ const fetchAnalytics = async () => {
   
   const results = await Promise.all(
     endpoints.map(endpoint => 
-      fetch(`http://localhost:8005${endpoint}`).then(r => r.json())
+      fetch(`http://localhost:8005${endpoint}`, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': 'your-api-key-here'
+        }
+      }).then(r => r.json())
     )
   );
   
