@@ -49,6 +49,12 @@ class UserSentiment(BaseModel):
     average_sentiment_score: float
     total_analyzed_messages: int
     sentiment_distribution: List[DistributionData]
+    # Composite metrics integrating explicit ratings with sentiment analysis
+    explicit_rating_score: Optional[float] = None  # Average from MessageRating table
+    total_explicit_ratings: int = 0
+    composite_satisfaction_score: Optional[float] = None  # Weighted combination
+    sentiment_vs_rating_correlation: Optional[float] = None  # Correlation analysis
+    rating_distribution: Optional[List[DistributionData]] = None  # 1-5 star distribution
 
 # Usage Analytics Schemas
 class TrafficMetrics(BaseModel):

@@ -10,6 +10,8 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import select
 
 from .models import Chat, ChatMessage, Document, Webpage
+# Import MessageRating for explicit rating integration
+from app.db.models.message_rating import MessageRating
 from .schemas import (
     UserDemographics, SessionFrequency, TrafficMetrics, SessionDuration,
     ConversationFlow, ROIMetrics, ContainmentRate, TrendData, DistributionData,
@@ -163,7 +165,7 @@ class AnalyticsService:
         # Unique users
         users_query = select(func.count(func.distinct(Chat.user_id))).where(
             and_(
-                Chat.created_at >= start_date,
+               
                 Chat.created_at <= end_date,
                 Chat.user_id.isnot(None)
             )
@@ -468,7 +470,13 @@ class AnalyticsService:
                 escalation_rate=0.0,
                 average_sentiment_score=0.0,
                 total_analyzed_messages=0,
-                sentiment_distribution=[]
+                sentiment_distribution=[],
+                # New composite metrics defaults
+                explicit_rating_score=None,
+                total_explicit_ratings=0,
+                composite_satisfaction_score=None,
+                sentiment_vs_rating_correlation=None,
+                rating_distribution=None
             )
         
         # Analyze sentiment for each message
@@ -577,6 +585,86 @@ class AnalyticsService:
                 else:
                     neutral_conversations += 1
         
+        # ========== NEW: RATING DATA INTEGRATION ==========
+        # Get explicit ratings for the time period
+        ratings_query = select(MessageRating).where(
+            and_(
+                MessageRating.created_at >= start_date,
+                MessageRating.created_at <= end_date
+            )
+        )
+        ratings_result = await db.execute(ratings_query)
+        ratings = ratings_result.scalars().all()
+        
+        # Calculate explicit rating metrics
+        explicit_rating_score = None
+        total_explicit_ratings = len(ratings)
+        rating_distribution = None
+        composite_satisfaction_score = None
+        sentiment_vs_rating_correlation = None
+        
+        if ratings:
+            # Calculate average explicit rating
+            rating_values = [rating.rating for rating in ratings]
+            explicit_rating_score = round(sum(rating_values) / len(rating_values), 2)
+            
+            # Create rating distribution (1-5 stars)
+            rating_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+            for rating in rating_values:
+                if 1 <= rating <= 5:
+                    rating_counts[rating] += 1
+            
+            rating_distribution = [
+                DistributionData(
+                    category=f"{star} Star{'s' if star != 1 else ''}",
+                    count=rating_counts[star],
+                    percentage=round(rating_counts[star] / total_explicit_ratings * 100, 1)
+                )
+                for star in range(1, 6)
+            ]
+            
+            # Calculate composite satisfaction score (weighted combination)
+            # Weight: 70% sentiment-based, 30% explicit ratings
+            sentiment_weight = 0.7
+            rating_weight = 0.3
+            
+            composite_satisfaction_score = round(
+                (satisfaction_score * sentiment_weight) + (explicit_rating_score * rating_weight), 2
+            )
+            
+            # Calculate correlation between sentiment and ratings for overlapping data
+            # Find messages that have both sentiment analysis and explicit ratings
+            overlapping_data = []
+            for rating in ratings:
+                # Try to find corresponding sentiment analysis for this message/session
+                for message in messages:
+                    if (message.chat.session_id == rating.session_id and 
+                        hasattr(message, 'message_id') and 
+                        message.message_id == rating.message_id):
+                        
+                        # Extract message content for sentiment analysis
+                        message_content = ""
+                        if isinstance(message.message_object, dict):
+                            message_content = message.message_object.get('content', '')
+                        elif isinstance(message.message_object, str):
+                            message_content = message.message_object
+                        
+                        if message_content.strip():
+                            sentiment_scores_for_correlation = sentiment_analyzer.analyze_sentiment(message_content)
+                            overlapping_data.append({
+                                'sentiment': sentiment_scores_for_correlation['compound'],
+                                'rating': rating.rating
+                            })
+                        break
+            
+            # Calculate correlation if we have overlapping data
+            if len(overlapping_data) >= 2:
+                sentiment_scores_corr = [d['sentiment'] for d in overlapping_data]
+                rating_scores_corr = [d['rating'] for d in overlapping_data]
+                sentiment_vs_rating_correlation = AnalyticsService._calculate_correlation(
+                    sentiment_scores_corr, rating_scores_corr
+                )
+        
         return UserSentiment(
             positive_conversations=positive_conversations,
             negative_conversations=negative_conversations,
@@ -585,5 +673,48 @@ class AnalyticsService:
             escalation_rate=round(escalation_rate, 1),
             average_sentiment_score=round(average_sentiment, 3),
             total_analyzed_messages=total_analyzed,
-            sentiment_distribution=sentiment_distribution
+            sentiment_distribution=sentiment_distribution,
+            # New composite metrics
+            explicit_rating_score=explicit_rating_score,
+            total_explicit_ratings=total_explicit_ratings,
+            composite_satisfaction_score=composite_satisfaction_score,
+            sentiment_vs_rating_correlation=sentiment_vs_rating_correlation,
+            rating_distribution=rating_distribution
         )
+    
+    @staticmethod
+    def _calculate_correlation(sentiment_scores: List[float], rating_scores: List[float]) -> Optional[float]:
+        """
+        Calculate Pearson correlation coefficient between sentiment and rating scores.
+        
+        Args:
+            sentiment_scores: List of sentiment compound scores (-1 to 1)
+            rating_scores: List of corresponding rating scores (1 to 5)
+            
+        Returns:
+            Correlation coefficient (-1 to 1) or None if insufficient data
+        """
+        if len(sentiment_scores) < 2 or len(rating_scores) < 2 or len(sentiment_scores) != len(rating_scores):
+            return None
+            
+        try:
+            # Calculate means
+            mean_sentiment = sum(sentiment_scores) / len(sentiment_scores)
+            mean_rating = sum(rating_scores) / len(rating_scores)
+            
+            # Calculate numerator and denominators for correlation
+            numerator = sum((s - mean_sentiment) * (r - mean_rating) for s, r in zip(sentiment_scores, rating_scores))
+            
+            sum_sq_sentiment = sum((s - mean_sentiment) ** 2 for s in sentiment_scores)
+            sum_sq_rating = sum((r - mean_rating) ** 2 for r in rating_scores)
+            
+            denominator = (sum_sq_sentiment * sum_sq_rating) ** 0.5
+            
+            if denominator == 0:
+                return None
+                
+            correlation = numerator / denominator
+            return round(correlation, 3)
+            
+        except (ZeroDivisionError, ValueError):
+            return None
