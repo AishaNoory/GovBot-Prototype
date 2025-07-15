@@ -16,3 +16,4 @@ httpx==0.28.1
 
 # Optional: Additional useful packages
 aiosqlite==0.21.0
+vaderSentiment==3.3.2

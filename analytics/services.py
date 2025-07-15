@@ -12,8 +12,10 @@ from sqlalchemy.sql import select
 from .models import Chat, ChatMessage, Document, Webpage
 from .schemas import (
     UserDemographics, SessionFrequency, TrafficMetrics, SessionDuration,
-    ConversationFlow, ROIMetrics, ContainmentRate, TrendData, DistributionData
+    ConversationFlow, ROIMetrics, ContainmentRate, TrendData, DistributionData,
+    UserSentiment
 )
+from .sentiment_analyzer import sentiment_analyzer
 
 class AnalyticsService:
     """Service class for analytics calculations and data processing."""
@@ -419,4 +421,169 @@ class AnalyticsService:
             partial_automation_rate=partial_automation_rate,
             human_handoff_rate=human_handoff_rate,
             resolution_success_rate=resolution_success_rate
+        )
+
+    @staticmethod
+    async def get_user_sentiment(
+        db: AsyncSession,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> UserSentiment:
+        """
+        Analyze user sentiment from chat messages using VADER sentiment analysis.
+        
+        Args:
+            db: Database session
+            start_date: Start date for analysis (defaults to 30 days ago)
+            end_date: End date for analysis (defaults to now)
+            
+        Returns:
+            UserSentiment with comprehensive sentiment metrics
+        """
+        # Set default time range if not provided
+        if not end_date:
+            end_date = datetime.utcnow()
+        if not start_date:
+            start_date = end_date - timedelta(days=30)
+        
+        # Get all user messages in the time period
+        messages_query = select(ChatMessage).join(Chat).where(
+            and_(
+                Chat.created_at >= start_date,
+                Chat.created_at <= end_date,
+                ChatMessage.message_type == 'user'  # Only analyze user messages
+            )
+        )
+        
+        messages_result = await db.execute(messages_query)
+        messages = messages_result.scalars().all()
+        
+        if not messages:
+            # Return default values if no messages found
+            return UserSentiment(
+                positive_conversations=0,
+                negative_conversations=0,
+                neutral_conversations=0,
+                satisfaction_score=3.0,
+                escalation_rate=0.0,
+                average_sentiment_score=0.0,
+                total_analyzed_messages=0,
+                sentiment_distribution=[]
+            )
+        
+        # Analyze sentiment for each message
+        sentiment_scores = []
+        escalation_indicators = 0
+        positive_count = 0
+        negative_count = 0
+        neutral_count = 0
+        
+        for message in messages:
+            # Extract text content from message_object
+            message_content = ""
+            if isinstance(message.message_object, dict):
+                message_content = message.message_object.get('content', '')
+            elif isinstance(message.message_object, str):
+                message_content = message.message_object
+            
+            if message_content.strip():
+                scores, classification = sentiment_analyzer.analyze_and_classify(message_content)
+                sentiment_scores.append(scores['compound'])
+                
+                # Count by classification
+                if classification == 'positive':
+                    positive_count += 1
+                elif classification == 'negative':
+                    negative_count += 1
+                else:
+                    neutral_count += 1
+                
+                # Check for escalation indicators
+                if sentiment_analyzer.is_escalation_indicator(message_content):
+                    escalation_indicators += 1
+        
+        total_analyzed = len(sentiment_scores)
+        
+        # Calculate metrics
+        average_sentiment = sum(sentiment_scores) / total_analyzed if total_analyzed > 0 else 0.0
+        satisfaction_score = sentiment_analyzer.calculate_satisfaction_score(average_sentiment)
+        escalation_rate = (escalation_indicators / total_analyzed * 100) if total_analyzed > 0 else 0.0
+        
+        # Create sentiment distribution
+        sentiment_distribution = [
+            DistributionData(
+                category="Positive",
+                count=positive_count,
+                percentage=round(positive_count / total_analyzed * 100, 1) if total_analyzed > 0 else 0.0
+            ),
+            DistributionData(
+                category="Neutral", 
+                count=neutral_count,
+                percentage=round(neutral_count / total_analyzed * 100, 1) if total_analyzed > 0 else 0.0
+            ),
+            DistributionData(
+                category="Negative",
+                count=negative_count,
+                percentage=round(negative_count / total_analyzed * 100, 1) if total_analyzed > 0 else 0.0
+            )
+        ]
+        
+        # Count conversations by overall sentiment
+        # Get conversations and their overall sentiment
+        conversations_query = select(Chat.id).where(
+            and_(
+                Chat.created_at >= start_date,
+                Chat.created_at <= end_date
+            )
+        )
+        conversations_result = await db.execute(conversations_query)
+        conversation_ids = [row[0] for row in conversations_result.fetchall()]
+        
+        positive_conversations = 0
+        negative_conversations = 0
+        neutral_conversations = 0
+        
+        # Analyze sentiment per conversation
+        for chat_id in conversation_ids:
+            chat_messages_query = select(ChatMessage).where(
+                and_(
+                    ChatMessage.chat_id == chat_id,
+                    ChatMessage.message_type == 'user'
+                )
+            )
+            chat_messages_result = await db.execute(chat_messages_query)
+            chat_messages = chat_messages_result.scalars().all()
+            
+            conversation_scores = []
+            for msg in chat_messages:
+                message_content = ""
+                if isinstance(msg.message_object, dict):
+                    message_content = msg.message_object.get('content', '')
+                elif isinstance(msg.message_object, str):
+                    message_content = msg.message_object
+                
+                if message_content.strip():
+                    scores = sentiment_analyzer.analyze_sentiment(message_content)
+                    conversation_scores.append(scores['compound'])
+            
+            if conversation_scores:
+                avg_conversation_sentiment = sum(conversation_scores) / len(conversation_scores)
+                conversation_classification = sentiment_analyzer.classify_sentiment(avg_conversation_sentiment)
+                
+                if conversation_classification == 'positive':
+                    positive_conversations += 1
+                elif conversation_classification == 'negative':
+                    negative_conversations += 1
+                else:
+                    neutral_conversations += 1
+        
+        return UserSentiment(
+            positive_conversations=positive_conversations,
+            negative_conversations=negative_conversations,
+            neutral_conversations=neutral_conversations,
+            satisfaction_score=satisfaction_score,
+            escalation_rate=round(escalation_rate, 1),
+            average_sentiment_score=round(average_sentiment, 3),
+            total_analyzed_messages=total_analyzed,
+            sentiment_distribution=sentiment_distribution
         )

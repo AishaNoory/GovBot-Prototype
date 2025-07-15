@@ -46,6 +46,9 @@ class UserSentiment(BaseModel):
     neutral_conversations: int
     satisfaction_score: float
     escalation_rate: float
+    average_sentiment_score: float
+    total_analyzed_messages: int
+    sentiment_distribution: List[DistributionData]
 
 # Usage Analytics Schemas
 class TrafficMetrics(BaseModel):
