@@ -51,17 +51,30 @@ async def get_user_sentiment(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get user sentiment and satisfaction metrics using VADER sentiment analysis.
+    Get comprehensive user sentiment and satisfaction metrics with composite analysis.
     
-    Analyzes user messages to provide:
+    Combines VADER sentiment analysis with explicit user ratings to provide:
+    
+    **Sentiment Analysis (VADER-based):**
     - Conversation sentiment classification (positive, negative, neutral)
     - User satisfaction indicators based on message tone
     - Escalation patterns from negative sentiment detection
     - Detailed sentiment distribution across all messages
     
-    VADER (Valence Aware Dictionary and sEntiment Reasoner) is particularly
-    effective for analyzing informal text like chat messages, handling slang,
-    emojis, and conversational language patterns.
+    **Explicit Rating Integration:**
+    - User-provided star ratings (1-5 scale) analysis
+    - Rating distribution and average scores
+    - Composite satisfaction score (weighted: 70% sentiment + 30% ratings)
+    - Correlation analysis between sentiment predictions and actual ratings
+    
+    **Composite Metrics Benefits:**
+    - Validation of sentiment analysis accuracy
+    - Balanced satisfaction measurement
+    - Confidence indicators for automated analysis
+    - Multiple perspectives on user satisfaction
+    
+    VADER is particularly effective for analyzing informal text like chat messages,
+    handling slang, emojis, and conversational language patterns.
     """
     return await AnalyticsService.get_user_sentiment(db, start_date, end_date)
 
