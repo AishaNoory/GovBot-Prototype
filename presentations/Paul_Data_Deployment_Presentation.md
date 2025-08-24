@@ -11,7 +11,7 @@ Slide 1 — Title & Objectives
 - Objectives:
   - Deep dive into multi-database architecture: PostgreSQL, MinIO, ChromaDB
   - Implement automated backup, disaster recovery, and monitoring systems
-  - Deploy production containerized infrastructure with Docker Compose and Kubernetes
+  - Deploy production containerized infrastructure with Docker Compose (no Kubernetes)
   - Build scalable data pipelines with real-time indexing and analytics
 
 Recommended image: Complete infrastructure architecture diagram with all components
@@ -66,6 +66,10 @@ services:
           cpus: '1.0'
 ```
 
+Explanation: Example Compose service for Postgres with persistent volumes and basic resource caps for production-like behavior.
+
+Source: `docker-compose.yml` in repo root.
+
 Recommended image: Database interaction diagram showing data flow and relationships
 
 ---
@@ -74,7 +78,6 @@ Slide 3 — PostgreSQL: Advanced Configuration & Optimization
 
 **Production Database Schema:**
 ```sql
--- Core database tables with advanced indexing
 CREATE TABLE documents (
     id SERIAL PRIMARY KEY,
     filename VARCHAR(255) NOT NULL,
@@ -88,14 +91,20 @@ CREATE TABLE documents (
     is_indexed BOOLEAN NOT NULL DEFAULT FALSE,
     indexed_at TIMESTAMP WITH TIME ZONE
 );
+```
 
+Explanation: Defines the primary documents table storing file metadata and indexing flags; used throughout the API and analytics flows.
+
+Source: Schema aligns with `app/db` migrations and queries.
+
+```sql
 -- Performance optimization indexes
 CREATE INDEX CONCURRENTLY idx_documents_collection_indexed 
-    ON documents(collection_id, is_indexed, indexed_at);
+  ON documents(collection_id, is_indexed, indexed_at);
 CREATE INDEX CONCURRENTLY idx_documents_upload_date 
-    ON documents(upload_date DESC);
+  ON documents(upload_date DESC);
 CREATE INDEX CONCURRENTLY idx_documents_created_by_date 
-    ON documents(created_by, upload_date);
+  ON documents(created_by, upload_date);
 ```
 
 **Advanced PostgreSQL Configuration:**
@@ -116,6 +125,10 @@ max_wal_size = 2GB
 min_wal_size = 80MB
 ```
 
+Explanation: Suggested Postgres tuning defaults for SSD-backed hosts and moderate concurrency; adjust based on actual memory/IO and workload.
+
+Source: Operates on `postgresql.conf` for the Postgres container.
+
 **Connection Pooling Implementation:**
 ```python
 # SQLAlchemy async connection pool
@@ -130,6 +143,10 @@ engine = create_async_engine(
     echo=False                           # Disable SQL logging in production
 )
 ```
+
+Explanation: Creates an async SQLAlchemy engine with a bounded pool and health checks to reduce connection churn and avoid DB overload.
+
+Source: Pattern used across scripts in `scripts/*.py` and modules in `app/db`.
 
 **Database Partitioning Strategy:**
 ```sql
@@ -146,6 +163,10 @@ CREATE TABLE audit_logs (
 CREATE TABLE audit_logs_2025_08 PARTITION OF audit_logs
     FOR VALUES FROM ('2025-08-01') TO ('2025-09-01');
 ```
+
+Explanation: Hash/range partitioning improves write and query performance on time-series tables like audit logs and simplifies retention.
+
+Source: Can be included in migration scripts under `scripts/`.
 
 Recommended image: PostgreSQL performance monitoring dashboard
 
@@ -171,6 +192,10 @@ minio:
     timeout: 20s
     retries: 3
 ```
+
+Explanation: Single-node MinIO with healthcheck and Prometheus metrics enabled; mount persistent storage for object data.
+
+Source: `docker-compose.yml` service `minio`.
 
 **Bucket Lifecycle Management:**
 ```python
@@ -209,6 +234,10 @@ class MinioClient:
             }]
         }
 ```
+
+Explanation: Configures MinIO lifecycle and bucket policies programmatically to enforce retention and control access.
+
+Source: Example client; integrate with `app/core` as needed.
 
 **Presigned URL Security:**
 ```python
@@ -293,6 +322,10 @@ chroma:
     retries: 5
 ```
 
+Explanation: ChromaDB service with basic auth, persistent volume, and a healthcheck endpoint for Compose to monitor.
+
+Source: Add to `docker-compose.yml` as the `chroma` service.
+
 **Vector Store Setup & Management:**
 ```python
 async def setup_vector_store(collection_name: str):
@@ -349,6 +382,10 @@ async def setup_vector_store(collection_name: str):
         raise
 ```
 
+Explanation: Creates an authenticated Chroma client and ingestion pipeline with chunking and batched embedding.
+
+Source: Example function; integrate with `analytics/services.py` and ingestion flows.
+
 **Collection Statistics & Monitoring:**
 ```python
 async def get_collection_health_metrics(collection_id: str) -> Dict[str, Any]:
@@ -390,6 +427,10 @@ async def get_collection_health_metrics(collection_id: str) -> Dict[str, Any]:
         return {"collection_id": collection_id, "health_status": "error", "error": str(e)}
 ```
 
+Explanation: Samples collection embeddings and measures query latency to assess vector store health.
+
+Source: Example monitoring helper for use in `analytics/main.py` or services.
+
 **Backup & Recovery for Vector Data:**
 ```python
 async def backup_collection(collection_id: str, backup_path: str):
@@ -414,6 +455,10 @@ async def backup_collection(collection_id: str, backup_path: str):
     
     logger.info(f"Collection {collection_id} backed up successfully")
 ```
+
+Explanation: Exports all vectors plus metadata to a compressed JSON backup that can be restored later.
+
+Source: Example backup routine; wire into `scripts/` as needed.
 
 Recommended image: ChromaDB monitoring dashboard with collection metrics
 
@@ -506,6 +551,10 @@ async def index_uploaded_documents_by_collection(collection_id: str) -> Dict[str
             }
 ```
 
+Explanation: Orchestrates batch download, processing, and ingestion of unindexed documents, with retries and final stats.
+
+Source: Integrates with `app/core/rag/indexer.py` and `analytics/services.py`.
+
 **Chunking Strategy Optimization:**
 ```python
 class AdaptiveChunker:
@@ -568,6 +617,10 @@ class AdaptiveChunker:
         return chunk_documents
 ```
 
+Explanation: Adaptive chunking per content type tunes chunk size and overlap for better semantic retrieval performance.
+
+Source: Example component for `analytics/services.py`.
+
 **Embedding Quality Monitoring:**
 ```python
 async def monitor_embedding_quality(collection_id: str) -> Dict[str, Any]:
@@ -608,6 +661,10 @@ async def monitor_embedding_quality(collection_id: str) -> Dict[str, Any]:
         return {"status": "error", "collection_id": collection_id, "error": str(e)}
 ```
 
+Explanation: Computes simple embedding quality metrics and a quality score to detect drift or degradation.
+
+Source: Example monitor; can be scheduled via a cron job or background worker.
+
 Recommended image: Embeddings pipeline flow diagram with quality monitoring
 
 ---
@@ -633,6 +690,10 @@ RUN chmod +x /usr/local/bin/*.sh
 
 CMD ["cron", "-f"]
 ```
+
+Explanation: Containerized backup service with cron that runs backup/restore scripts and can be scheduled via Compose.
+
+Source: `docker/backup.Dockerfile` and scripts under `scripts/`.
 
 **Comprehensive Backup Script:**
 ```bash
@@ -751,6 +812,10 @@ esac
 log_message "Backup operation completed successfully"
 ```
 
+Explanation: Performs Postgres, MinIO, and Chroma backups with verification and retention cleanup; supports full or component-specific runs.
+
+Source: `scripts/backup_service.sh`.
+
 **Disaster Recovery Procedures:**
 ```python
 class DisasterRecoveryManager:
@@ -839,6 +904,10 @@ class DisasterRecoveryManager:
             raise RuntimeError(f"ChromaDB verification failed: {e}")
 ```
 
+Explanation: End-to-end recovery orchestration with component restores and post-restore integrity checks across DB, MinIO, and Chroma.
+
+Source: Example class; adapt into `scripts/restore_service.sh` or a Python CLI.
+
 **Backup Monitoring Dashboard:**
 ```python
 async def get_backup_status() -> Dict[str, Any]:
@@ -895,6 +964,10 @@ async def get_backup_status() -> Dict[str, Any]:
     }
 ```
 
+Explanation: Aggregates backup recency and sizes for all components, plus DR metrics (RPO/RTO) for Grafana panels or API exposure.
+
+Source: Example monitor function for `analytics/main.py` or an admin endpoint.
+
 Recommended image: Backup monitoring dashboard showing status and metrics
 
 ---
@@ -941,6 +1014,10 @@ services:
       - /sys:/host/sys:ro
       - /:/rootfs:ro
 ```
+
+Explanation: Prometheus, Grafana, and Node Exporter stack for container and host metrics; provision dashboards and datasources.
+
+Source: `docker-compose.monitoring.yml` and files under `monitoring/`.
 
 **Application Metrics Implementation:**
 ```python
@@ -998,6 +1075,10 @@ async def update_connection_metrics():
         logger.error(f"Error updating connection metrics: {e}")
 ```
 
+Explanation: ASGI middleware instruments request counts and latencies; a coroutine tracks DB connections for Prometheus scraping.
+
+Source: Add to API app under `app/api` and expose metrics.
+
 **Custom Dashboard Configuration:**
 ```json
 {
@@ -1047,6 +1128,10 @@ async def update_connection_metrics():
 }
 ```
 
+Explanation: Example Grafana dashboard JSON with panels for API latency, DB performance, and vector search.
+
+Source: Place under `monitoring/dashboards/`.
+
 **Alerting Rules:**
 ```yaml
 # prometheus/alerts.yml
@@ -1089,6 +1174,10 @@ groups:
           summary: "Disk space critically low"
           description: "Only {{ $value | humanizePercentage }} disk space remaining"
 ```
+
+Explanation: Prometheus alert rules for error rates, DB connections, vector latency, and disk space.
+
+Source: `monitoring/alerts.yml` referenced by Prometheus config.
 
 **Log Aggregation with ELK Stack:**
 ```python
@@ -1140,6 +1229,10 @@ class StructuredLogger:
             event_type="document_indexing"
         )
 ```
+
+Explanation: Structured JSON logs with structlog make ingestion into ELK/Splunk simple and searchable.
+
+Source: Add logging setup in the API to emit JSON logs.
 
 Recommended image: Comprehensive monitoring dashboard with all system metrics
 
@@ -1215,6 +1308,10 @@ services:
           memory: 512M
 ```
 
+Explanation: Production-oriented API service with healthchecks, resource constraints, and restart policy in a named Compose project.
+
+Source: `docker-compose.prod.yml`.
+
 **Nginx Configuration for Production:**
 ```nginx
 # nginx/nginx.conf
@@ -1282,160 +1379,11 @@ http {
 }
 ```
 
-**Kubernetes Deployment Manifests:**
-```yaml
-# k8s/govstack-deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: govstack-api
-  labels:
-    app: govstack-api
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: govstack-api
-  template:
-    metadata:
-      labels:
-        app: govstack-api
-    spec:
-      containers:
-      - name: govstack-api
-        image: govstack/api:1.0.0
-        ports:
-        - containerPort: 5000
-        env:
-        - name: DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: govstack-secrets
-              key: database-url
-        - name: GOVSTACK_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: govstack-secrets
-              key: api-key
-        resources:
-          requests:
-            memory: "1Gi"
-            cpu: "500m"
-          limits:
-            memory: "2Gi"
-            cpu: "1000m"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 5000
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 5000
-          initialDelaySeconds: 5
-          periodSeconds: 5
+Explanation: Use Nginx as a reverse proxy/terminator in front of the API when exposing to the internet; otherwise, Compose’s port mappings suffice for internal environments.
 
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: govstack-api-service
-spec:
-  selector:
-    app: govstack-api
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 5000
-  type: LoadBalancer
+Source: Nginx example is illustrative; core stack source: `docker-compose.yml` in repo root.
 
----
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: govstack-api-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: govstack-api
-  minReplicas: 3
-  maxReplicas: 10
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: 80
-```
-
-**Helm Chart Configuration:**
-```yaml
-# helm/govstack/values.yaml
-replicaCount: 3
-
-image:
-  repository: govstack/api
-  tag: "1.0.0"
-  pullPolicy: IfNotPresent
-
-service:
-  type: LoadBalancer
-  port: 80
-  targetPort: 5000
-
-ingress:
-  enabled: true
-  className: "nginx"
-  annotations:
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    nginx.ingress.kubernetes.io/rate-limit: "100"
-  hosts:
-    - host: api.govstack.com
-      paths:
-        - path: /
-          pathType: Prefix
-  tls:
-    - secretName: govstack-api-tls
-      hosts:
-        - api.govstack.com
-
-resources:
-  limits:
-    cpu: 1000m
-    memory: 2Gi
-  requests:
-    cpu: 500m
-    memory: 1Gi
-
-autoscaling:
-  enabled: true
-  minReplicas: 3
-  maxReplicas: 10
-  targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 80
-
-postgresql:
-  enabled: true
-  auth:
-    postgresPassword: "secure-password"
-    database: "govstackdb"
-  primary:
-    persistence:
-      enabled: true
-      size: 100Gi
-```
-
-Recommended image: Kubernetes deployment architecture with scaling and load balancing
+Recommended image: Docker Compose deployment architecture with reverse proxy
 
 ---
 
@@ -1471,6 +1419,10 @@ app.include_router(usage_analytics.router, prefix="/analytics/usage", tags=["Usa
 app.include_router(conversation_analytics.router, prefix="/analytics/conversation", tags=["Conversation Analytics"])
 app.include_router(business_analytics.router, prefix="/analytics/business", tags=["Business Analytics"])
 ```
+
+Explanation: FastAPI analytics microservice with CORS and modular routers for different analytics domains.
+
+Source: `analytics/main.py`.
 
 **Real-Time Analytics Pipeline:**
 ```python
@@ -1517,6 +1469,10 @@ class AnalyticsProcessor:
             elif event_type == 'api_request':
                 await self.process_api_events(group_events)
 ```
+
+Explanation: Async processor groups and handles events in batches on a schedule; integrate with Redis or a message queue.
+
+Source: Example class in `analytics/services.py`.
 
 **Analytics Data Models:**
 ```python
@@ -1591,6 +1547,10 @@ class SystemHealth(BaseModel):
     scalability_recommendations: List[str]
 ```
 
+Explanation: Pydantic models representing analytics payloads and computed metrics for dashboards.
+
+Source: `analytics/schemas.py`.
+
 **Privacy-Preserving Analytics:**
 ```python
 class PrivacyPreservingAnalytics:
@@ -1645,9 +1605,9 @@ Recommended image: Analytics microservice architecture with privacy controls
 
 ---
 
-Slide 11 — Advanced Deployment Strategies
+Slide 11 — Advanced Deployment Strategies (Compose)
 
-**Blue-Green Deployment Implementation:**
+**Blue-Green Deployment Implementation (Docker Compose):**
 ```bash
 #!/bin/bash
 # scripts/blue_green_deploy.sh
@@ -1663,56 +1623,15 @@ log() {
 }
 
 deploy_blue_green() {
-    local current_env=$1
-    local new_version=$2
-    
-    log "Starting blue-green deployment for version $new_version"
-    
-    # Determine current and target environments
-    if docker-compose -p govstack-blue ps | grep -q "Up"; then
-        CURRENT="blue"
-        TARGET="green"
-    else
-        CURRENT="green"
-        TARGET="blue"
-    fi
-    
-    log "Current environment: $CURRENT, Target environment: $TARGET"
-    
-    # Deploy to target environment
-    log "Deploying to $TARGET environment..."
-    docker-compose -p govstack-$TARGET -f docker-compose.$TARGET.yml down
-    docker-compose -p govstack-$TARGET -f docker-compose.$TARGET.yml build --no-cache
-    docker-compose -p govstack-$TARGET -f docker-compose.$TARGET.yml up -d
-    
-    # Wait for services to be ready
-    log "Waiting for services to be ready..."
-    sleep 30
-    
-    # Health check
-    TARGET_URL="http://localhost:$(get_port $TARGET)/health"
-    if ! health_check "$TARGET_URL"; then
-        log "Health check failed, rolling back..."
-        docker-compose -p govstack-$TARGET -f docker-compose.$TARGET.yml down
-        exit 1
-    fi
-    
-    # Switch traffic (update load balancer)
-    log "Switching traffic to $TARGET environment..."
-    update_load_balancer_target "$TARGET"
-    
-    # Final verification
-    sleep 10
-    if health_check "$HEALTH_CHECK_URL"; then
-        log "Deployment successful, shutting down $CURRENT environment..."
-        docker-compose -p govstack-$CURRENT -f docker-compose.$CURRENT.yml down
-        log "Blue-green deployment completed successfully"
-    else
-        log "Final health check failed, rolling back..."
-        update_load_balancer_target "$CURRENT"
-        docker-compose -p govstack-$TARGET -f docker-compose.$TARGET.yml down
-        exit 1
-    fi
+  local env=$1
+  local version=$2
+  log "Starting blue-green deployment for version $version"
+  # Launch a parallel stack using a distinct project name
+  docker compose -p govstack-${env}-${version} up -d --build
+  # Health check new stack
+  health_check "$HEALTH_CHECK_URL"
+  # Switch traffic at reverse proxy/DNS layer (manual or scripted)
+  # Then stop old stack (example): docker compose -p govstack-${env}-old down
 }
 
 health_check() {
@@ -1735,91 +1654,13 @@ health_check() {
 
 # Execute deployment
 deploy_blue_green "$ENVIRONMENT" "$NEW_VERSION"
+
+Explanation: This script implements blue/green using two Docker Compose projects: bring up the new stack, validate via health checks, then shift traffic at the proxy/DNS layer and retire the old stack.
+
+Source: Script example; main stack defined in `docker-compose.yml` in repo root.
 ```
 
-**Canary Deployment with Kubernetes:**
-```yaml
-# k8s/canary-deployment.yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Rollout
-metadata:
-  name: govstack-api-rollout
-spec:
-  replicas: 10
-  strategy:
-    canary:
-      steps:
-      - setWeight: 10   # 10% traffic to canary
-      - pause:
-          duration: 300s  # 5 minutes
-      - setWeight: 25   # 25% traffic to canary
-      - pause:
-          duration: 300s
-      - setWeight: 50   # 50% traffic to canary
-      - pause:
-          duration: 600s  # 10 minutes
-      - setWeight: 75   # 75% traffic to canary
-      - pause:
-          duration: 300s
-      # If all checks pass, complete rollout
-      canaryService: govstack-api-canary
-      stableService: govstack-api-stable
-      trafficRouting:
-        nginx:
-          stableIngress: govstack-api-stable
-          annotationPrefix: nginx.ingress.kubernetes.io
-          additionalIngressAnnotations:
-            canary-by-header: "X-Canary"
-      analysis:
-        templates:
-        - templateName: success-rate
-        - templateName: response-time
-        args:
-        - name: service-name
-          value: govstack-api-canary
-  selector:
-    matchLabels:
-      app: govstack-api
-  template:
-    metadata:
-      labels:
-        app: govstack-api
-    spec:
-      containers:
-      - name: govstack-api
-        image: govstack/api:{{.Values.image.tag}}
-        ports:
-        - containerPort: 5000
-        resources:
-          requests:
-            memory: "1Gi"
-            cpu: "500m"
-          limits:
-            memory: "2Gi"
-            cpu: "1000m"
-
----
-apiVersion: argoproj.io/v1alpha1
-kind: AnalysisTemplate
-metadata:
-  name: success-rate
-spec:
-  args:
-  - name: service-name
-  metrics:
-  - name: success-rate
-    interval: 30s
-    successCondition: result[0] >= 0.95
-    failureLimit: 3
-    provider:
-      prometheus:
-        address: http://prometheus:9090
-        query: |
-          sum(rate(govstack_requests_total{service="{{args.service-name}}",status!~"5.."}[5m])) /
-          sum(rate(govstack_requests_total{service="{{args.service-name}}"}[5m]))
-```
-
-**Infrastructure as Code with Terraform:**
+**Infrastructure as Code (optional) with Terraform:**
 ```hcl
 # terraform/main.tf
 terraform {
@@ -1829,55 +1670,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "~> 2.0"
-    }
   }
 }
 
-# EKS Cluster
-module "eks" {
-  source = "terraform-aws-modules/eks/aws"
-  
-  cluster_name    = "govstack-production"
-  cluster_version = "1.28"
-  
-  vpc_id     = module.vpc.vpc_id
-  subnet_ids = module.vpc.private_subnets
-  
-  # Node groups
-  eks_managed_node_groups = {
-    govstack_nodes = {
-      min_size     = 3
-      max_size     = 10
-      desired_size = 5
-      
-      instance_types = ["m5.large", "m5.xlarge"]
-      
-      k8s_labels = {
-        Environment = "production"
-        Application = "govstack"
-      }
-    }
-  }
-  
-  # Cluster addons
-  cluster_addons = {
-    coredns = {
-      most_recent = true
-    }
-    kube-proxy = {
-      most_recent = true
-    }
-    vpc-cni = {
-      most_recent = true
-    }
-    aws-ebs-csi-driver = {
-      most_recent = true
-    }
-  }
-}
+// Note: Example shows cloud resources (DB, S3) only; container orchestration is Docker Compose, not Kubernetes.
 
 # RDS for PostgreSQL
 resource "aws_db_instance" "govstack_postgres" {
@@ -1942,11 +1738,15 @@ resource "aws_s3_bucket_encryption" "govstack_encryption" {
 }
 ```
 
-Recommended image: Deployment pipeline diagram with blue-green and canary strategies
+Explanation: Provisions managed cloud services such as PostgreSQL (RDS) and S3-compatible storage with encryption and backups. Containers remain orchestrated by Docker Compose on your hosts; Terraform only handles underlying cloud resources.
+
+Source: Example IaC snippet; not required for local Compose. Place under `infra/terraform/` if adopted.
+
+Recommended image: Deployment pipeline diagram with blue/green switched via reverse proxy
 
 ---
 
-Slide 12 — CI/CD Pipeline & GitOps Implementation
+Slide 12 — CI/CD Pipeline (GitHub Actions) & Remote Compose Deploy
 
 **Advanced CI/CD Pipeline:**
 ```yaml
@@ -2070,120 +1870,43 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     environment: staging
-    
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Setup Kubectl
-        uses: azure/setup-kubectl@v3
+      - name: Deploy to staging host via SSH and Docker Compose
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          version: 'v1.28.0'
-      
-      - name: Deploy to staging
-        env:
-          KUBE_CONFIG: ${{ secrets.STAGING_KUBE_CONFIG }}
-        run: |
-          echo "$KUBE_CONFIG" | base64 -d > kubeconfig
-          export KUBECONFIG=kubeconfig
-          
-          # Update image tag in deployment
-          kubectl set image deployment/govstack-api \
-            govstack-api=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main \
-            -n staging
-          
-          # Wait for rollout
-          kubectl rollout status deployment/govstack-api -n staging --timeout=600s
-      
-      - name: Run smoke tests
-        run: |
-          curl -f https://staging-api.govstack.com/health
-          python tests/smoke_tests/test_staging.py
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd /opt/govstack
+            docker compose pull
+            docker compose up -d
+            curl -f http://localhost:5000/health
 
   deploy-production:
     needs: deploy-staging
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     environment: production
-    
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Deploy to production with Argo CD
-        env:
-          ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
-          ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
-        run: |
-          # Install Argo CD CLI
-          curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
-          chmod +x argocd
-          
-          # Update application image
-          ./argocd app set govstack-production \
-            --parameter image.tag=${GITHUB_REF#refs/tags/} \
-            --server $ARGOCD_SERVER \
-            --auth-token $ARGOCD_AUTH_TOKEN
-          
-          # Sync application
-          ./argocd app sync govstack-production \
-            --server $ARGOCD_SERVER \
-            --auth-token $ARGOCD_AUTH_TOKEN
-          
-          # Wait for sync
-          ./argocd app wait govstack-production \
-            --timeout 600 \
-            --server $ARGOCD_SERVER \
-            --auth-token $ARGOCD_AUTH_TOKEN
+      - name: Deploy to production host via SSH and Docker Compose
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd /opt/govstack
+            docker compose pull
+            docker compose up -d
+            curl -f http://localhost:5000/health
 ```
 
-**GitOps with ArgoCD:**
-```yaml
-# argocd/application.yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: govstack-production
-  namespace: argocd
-spec:
-  project: default
-  
-  source:
-    repoURL: https://github.com/think-ke/govstack
-    targetRevision: HEAD
-    path: k8s/production
-    helm:
-      valueFiles:
-        - values.yaml
-        - values-production.yaml
-  
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: govstack-production
-  
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-      allowEmpty: false
-    syncOptions:
-      - CreateNamespace=true
-      - PrunePropagationPolicy=foreground
-      - PruneLast=true
-    retry:
-      limit: 5
-      backoff:
-        duration: 5s
-        factor: 2
-        maxDuration: 3m
-  
-  revisionHistoryLimit: 10
-  
-  # Health checks
-  ignoreDifferences:
-    - group: apps
-      kind: Deployment
-      jsonPointers:
-        - /spec/replicas
-```
+Explanation: CI runs tests and builds/pushes images. CD connects to your remote host over SSH and runs Docker Compose to pull and restart services, then validates with a health check.
+
+Source: Workflow file belongs at `.github/workflows/production-deploy.yml` in your repo.
 
 **Database Migration Pipeline:**
 ```python
@@ -2467,34 +2190,20 @@ async def get_collection_stats_cached(collection_id: str) -> Dict[str, Any]:
         return await get_collection_stats(db, collection_id)
 ```
 
-**Horizontal Scaling Architecture:**
+**Horizontal Scaling (Docker Compose):**
 ```yaml
-# k8s/autoscaling.yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: govstack-api-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: govstack-api
-  minReplicas: 3
-  maxReplicas: 20
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: 80
-  - type: Pods
+# docker-compose.override.yml (scale example)
+services:
+  govstack-server:
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
     pods:
       metric:
         name: http_requests_per_second
@@ -2508,29 +2217,11 @@ spec:
       - type: Pods
         value: 2
         periodSeconds: 60
-    scaleUp:
-      stabilizationWindowSeconds: 60
-      policies:
-      - type: Pods
-        value: 4
-        periodSeconds: 60
-      - type: Percent
-        value: 100
-        periodSeconds: 15
-
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: govstack-api-headless
-spec:
-  clusterIP: None
-  selector:
-    app: govstack-api
-  ports:
-  - port: 5000
-    targetPort: 5000
 ```
+
+Explanation: Scale the API by increasing replicas (in Swarm) or run multiple Compose projects behind Nginx. Resource limits avoid contention on shared hosts.
+
+Source: Compose example; base file: `docker-compose.yml`.
 
 **Connection Pool Optimization:**
 ```python
@@ -2713,57 +2404,25 @@ async def get_collection_stats_cached(collection_id: str) -> Dict[str, Any]:
         return await get_collection_stats(db, collection_id)
 ```
 
-**Horizontal Scaling Architecture:**
+**Horizontal Scaling (Docker Compose):**
 ```yaml
-# k8s/autoscaling.yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: govstack-api-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: govstack-api
-  minReplicas: 3
-  maxReplicas: 20
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: 80
-  - type: Pods
-    pods:
-      metric:
-        name: http_requests_per_second
-      target:
-        type: AverageValue
-        averageValue: "100"
-  behavior:
-    scaleDown:
-      stabilizationWindowSeconds: 300
-      policies:
-      - type: Pods
-        value: 2
-        periodSeconds: 60
-    scaleUp:
-      stabilizationWindowSeconds: 60
-      policies:
-      - type: Pods
-        value: 4
-        periodSeconds: 60
-      - type: Percent
-        value: 100
-        periodSeconds: 15
+# docker-compose.override.yml (scale example)
+services:
+  govstack-server:
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
 ```
+
+Explanation: Scale the API by increasing replicas (in Swarm) or run multiple Compose projects behind Nginx. Resource limits avoid contention on shared hosts.
+
+Source: Compose example; base file: `docker-compose.yml`.
 
 Recommended image: Scaling architecture diagram with auto-scaling metrics and thresholds
 
@@ -2773,107 +2432,76 @@ Slide 14 — Cost Optimization & Resource Management
 
 **Resource Allocation Strategies:**
 ```yaml
-# k8s/resource-management.yaml
-apiVersion: v1
-kind: ResourceQuota
-metadata:
-  name: govstack-quota
-  namespace: govstack-production
-spec:
-  hard:
-    requests.cpu: "50"
-    requests.memory: 100Gi
-    limits.cpu: "100"
-    limits.memory: 200Gi
-    persistentvolumeclaims: 10
-    services.loadbalancers: 2
-
----
-apiVersion: v1
-kind: LimitRange
-metadata:
-  name: govstack-limits
-  namespace: govstack-production
-spec:
-  limits:
-  - default:
-      cpu: "2"
-      memory: "4Gi"
-    defaultRequest:
-      cpu: "500m"
-      memory: "1Gi"
-    max:
-      cpu: "8"
-      memory: "16Gi"
-    min:
-      cpu: "100m"
-      memory: "128Mi"
-    type: Container
+# docker-compose.override.yml (per-service resource limits)
+services:
+  govstack-server:
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 3G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+  analytics:
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+        reservations:
+          cpus: "0.25"
+          memory: 512M
 ```
+
+Explanation: Use Compose deploy.resources to set container cgroup caps and reservations. Memory limits are enforced; CPU is scheduled proportionally on Docker. Apply per service to reduce noisy neighbors and control cost.
+
+Source: Example overlay for `docker-compose.yml`.
 
 **Cost Monitoring & Analytics:**
 ```python
-# scripts/cost_analyzer.py
-class CostAnalyzer:
-    def __init__(self):
-        config.load_incluster_config()
-        self.k8s_client = client.CoreV1Api()
-        self.prometheus = PrometheusConnect(url="http://prometheus:9090")
-        
-    async def analyze_resource_costs(self, namespace: str = "govstack-production") -> Dict[str, Any]:
-        """Analyze resource costs and utilization"""
-        
-        # Get current resource allocations
-        pods = self.k8s_client.list_namespaced_pod(namespace)
-        
-        cost_analysis = {
-            "total_pods": len(pods.items),
-            "resource_requests": {"cpu": 0, "memory": 0},
-            "resource_limits": {"cpu": 0, "memory": 0},
-            "optimization_recommendations": []
-        }
-        
-        for pod in pods.items:
-            for container in pod.spec.containers:
-                if container.resources:
-                    if container.resources.requests:
-                        cpu_req = self._parse_cpu(container.resources.requests.get('cpu', '0'))
-                        mem_req = self._parse_memory(container.resources.requests.get('memory', '0'))
-                        cost_analysis["resource_requests"]["cpu"] += cpu_req
-                        cost_analysis["resource_requests"]["memory"] += mem_req
-        
-        # Get actual utilization from Prometheus
-        utilization = await self._get_utilization_metrics(namespace)
-        
-        # Calculate cost efficiency
-        efficiency = self._calculate_efficiency(cost_analysis, utilization)
-        cost_analysis["efficiency_score"] = efficiency
-        
-        # Generate optimization recommendations
-        cost_analysis["optimization_recommendations"] = self._generate_recommendations(
-            cost_analysis, utilization
-        )
-        
-        return cost_analysis
-    
-    def _generate_recommendations(self, resources: Dict, utilization: Dict) -> List[str]:
-        """Generate cost optimization recommendations"""
-        recommendations = []
-        
-        # Check for over-provisioning
-        cpu_usage_ratio = utilization["cpu_utilization"] / resources["resource_requests"]["cpu"] if resources["resource_requests"]["cpu"] > 0 else 0
-        mem_usage_ratio = utilization["memory_utilization"] / resources["resource_requests"]["memory"] if resources["resource_requests"]["memory"] > 0 else 0
-        
-        if cpu_usage_ratio < 0.3:
-            recommendations.append("Consider reducing CPU requests - current utilization is below 30%")
-        
-        if mem_usage_ratio < 0.3:
-            recommendations.append("Consider reducing memory requests - current utilization is below 30%")
-        
-        if cpu_usage_ratio > 0.8:
-            recommendations.append("Consider increasing CPU requests - current utilization is above 80%")
-        
-        return recommendations
+# examples/compose_cost_analyzer.py
+from datetime import datetime, timedelta
+from prometheus_api_client import PrometheusConnect
+
+class ComposeCostAnalyzer:
+  def __init__(self, prom_url: str = "http://prometheus:9090"):
+    self.prom = PrometheusConnect(url=prom_url)
+
+  def _range(self, minutes: int = 60):
+    end = datetime.utcnow()
+    start = end - timedelta(minutes=minutes)
+    return {"start_time": start, "end_time": end, "step": "60s"}
+
+  def avg_cpu_cores(self, container_match: str):
+    q = f"avg(sum by (container) (rate(container_cpu_usage_seconds_total{{container=~\"{container_match}\"}}[1m])))"
+    data = self.prom.custom_query_range(q, **self._range())
+    series = data[0]["values"] if data else []
+    return sum(float(v[1]) for v in series) / max(len(series), 1)
+
+  def avg_mem_gb(self, container_match: str):
+    q = f"avg(container_memory_working_set_bytes{{container=~\"{container_match}\"}}) / 1024^3"
+    data = self.prom.custom_query_range(q, **self._range())
+    series = data[0]["values"] if data else []
+    return sum(float(v[1]) for v in series) / max(len(series), 1)
+
+  def estimate_hourly_cost(self, container_pattern: str, cpu_cost_per_core_hr: float, mem_cost_per_gb_hr: float):
+    cpu = self.avg_cpu_cores(container_pattern)
+    mem = self.avg_mem_gb(container_pattern)
+    return {
+      "avg_cpu_cores": cpu,
+      "avg_mem_gb": mem,
+      "est_cost_per_hour": cpu * cpu_cost_per_core_hr + mem * mem_cost_per_gb_hr,
+    }
+
+if __name__ == "__main__":
+  analyzer = ComposeCostAnalyzer()
+  print(analyzer.estimate_hourly_cost(container_pattern="govstack-server", cpu_cost_per_core_hr=0.04, mem_cost_per_gb_hr=0.01))
+```
+
+Explanation: Pull CPU and memory usage directly from Prometheus (cAdvisor/node-exporter) for Docker containers matching a name pattern and compute rough hourly cost. No Kubernetes client required.
+
+Source: Example script (not yet in repo).
 ```
 
 **Database Storage Optimization:**
@@ -2919,6 +2547,10 @@ class StorageOptimizer:
         result = await db.execute(query)
         return {row.tablename: dict(row._mapping) for row in result}
 ```
+
+Explanation: Audits table sizes and identifies archival and cleanup candidates to reduce storage costs and improve performance.
+
+Source: Example helper; add to `scripts/storage_optimizer.py` or integrate into `analytics/services.py`.
 
 Recommended image: Cost optimization dashboard showing resource utilization and efficiency metrics
 
@@ -3027,6 +2659,10 @@ main() {
 main "$@"
 ```
 
+Explanation: Bootstraps a local lab by checking prerequisites, creating directories, and generating a `.env` file for a lab Compose stack.
+
+Source: Example script; store as `setup-lab-environment.sh` in repo root.
+
 **Lab Exercise Guide:**
 ```markdown
 # Lab Exercise 1: Basic Deployment
@@ -3091,6 +2727,10 @@ Common issues and solutions:
 3. Database connection: Verify PostgreSQL is fully started
 ```
 
+Explanation: Lab guide for deploying, validating, and exploring the stack locally using Docker Compose and built-in scripts.
+
+Source: Example documentation; include in `presentations/` or `docs/labs.md`.
+
 Recommended image: Lab environment architecture diagram with service connections and ports
   2. Apply migrations: scripts/run-migrations.sh or Alembic
   3. Upload sample documents (use `scripts/run_document_indexing.py`)
@@ -3103,52 +2743,302 @@ Tools: Docker, docker-compose, curl/postman, repo scripts
 
 Slide 16 — Data Migration & Moving to Prod
 
-- Strategies:
-  - Dump & restore for Postgres (pg_dump/pg_restore)
-  - Export/Import vector collections and object buckets
-  - Validate hashes and metadata during import
-- Migration testing: staging environment and canary traffic
+**PostgreSQL Migration Pipeline (Zero-downtime ready):**
+```bash
+# scripts/migrate_postgres.sh
+set -euo pipefail
 
-Recommended image: Migration workflow diagram
+SRC_DB_URL="$1"   # e.g. postgresql://user:pass@src-host:5432/srcdb
+DST_DB_URL="$2"   # e.g. postgresql://user:pass@dst-host:5432/destdb
+
+timestamp=$(date +%Y%m%d_%H%M%S)
+backup_file="/tmp/pg_migrate_${timestamp}.sql.gz"
+
+echo "[1/6] Creating source backup"
+pg_dump --clean --if-exists --quote-all-identifiers \
+  --no-owner --no-privileges --format=plain \
+  "$SRC_DB_URL" | gzip > "$backup_file"
+
+echo "[2/6] Validating backup integrity"
+gunzip -t "$backup_file"
+
+echo "[3/6] Preflight checks on destination"
+psql "$DST_DB_URL" -v ON_ERROR_STOP=1 -c "SELECT version()" >/dev/null
+
+echo "[4/6] Restoring to destination"
+gunzip -c "$backup_file" | psql "$DST_DB_URL" -v ON_ERROR_STOP=1
+
+echo "[5/6] Post-restore migrations (alembic)"
+alembic upgrade head
+
+echo "[6/6] Data consistency checks"
+psql "$DST_DB_URL" -v ON_ERROR_STOP=1 -c "\
+  SELECT 'documents' as table, COUNT(*) cnt FROM documents UNION ALL \
+  SELECT 'webpages', COUNT(*) FROM webpages UNION ALL \
+  SELECT 'audit_logs', COUNT(*) FROM audit_logs;"
+```
+
+Explanation: Performs a dump/restore from source to destination Postgres, validates integrity, then runs Alembic migrations and row-count checks.
+
+Source: Example script; add as `scripts/migrate_postgres.sh`.
+
+**Vector Collections & MinIO Object Migration:**
+```python
+# scripts/migrate_vector_and_objects.py
+import os, json, hashlib
+from datetime import datetime
+from minio import Minio
+from chromadb import HttpClient
+
+MINIO_SRC = Minio(os.getenv('MINIO_SRC_HOST'), access_key=os.getenv('MINIO_SRC_KEY'), secret_key=os.getenv('MINIO_SRC_SECRET'), secure=False)
+MINIO_DST = Minio(os.getenv('MINIO_DST_HOST'), access_key=os.getenv('MINIO_DST_KEY'), secret_key=os.getenv('MINIO_DST_SECRET'), secure=False)
+
+chroma_src = HttpClient(host=os.getenv('CHROMA_SRC_HOST'), port=int(os.getenv('CHROMA_SRC_PORT', '8000')))
+chroma_dst = HttpClient(host=os.getenv('CHROMA_DST_HOST'), port=int(os.getenv('CHROMA_DST_PORT', '8000')))
+
+def hash_stream(stream, chunk_size=8192):
+    h = hashlib.sha256()
+    while True:
+        data = stream.read(chunk_size)
+        if not data:
+            break
+        h.update(data)
+    return h.hexdigest()
+
+def migrate_bucket(bucket):
+    if not MINIO_DST.bucket_exists(bucket):
+        MINIO_DST.make_bucket(bucket)
+    for obj in MINIO_SRC.list_objects(bucket, recursive=True):
+        src = MINIO_SRC.get_object(bucket, obj.object_name)
+        digest = hash_stream(src)
+        src.close(); src.release_conn()
+        
+        # Copy via presigned URLs or stream
+        response = MINIO_SRC.get_object(bucket, obj.object_name)
+        MINIO_DST.put_object(bucket, obj.object_name, response, length=obj.size, metadata={"sha256": digest})
+        response.close(); response.release_conn()
+
+        # Verify
+        head = MINIO_DST.stat_object(bucket, obj.object_name)
+        assert head.metadata.get('X-Amz-Meta-Sha256') == digest
+
+def migrate_chroma_collection(name):
+    src_col = chroma_src.get_or_create_collection(name=name)
+    dst_col = chroma_dst.get_or_create_collection(name=name)
+    
+    # Export in batches
+    offset = 0; batch = 100
+    while True:
+        items = src_col.get(ids=None, limit=batch, offset=offset)
+        if not items or not items.get('ids'):
+            break
+        dst_col.add(
+            ids=items['ids'],
+            embeddings=items.get('embeddings'),
+            metadatas=items.get('metadatas'),
+            documents=items.get('documents')
+        )
+        offset += batch
+
+if __name__ == "__main__":
+    # Buckets
+    for bucket in ["documents", "webpages", "thumbnails"]:
+        migrate_bucket(bucket)
+    # Vector collections
+    for coll in ["govstack_docs", "webpage_chunks"]:
+        migrate_chroma_collection(coll)
+```
+
+Explanation: Copies MinIO buckets with checksum verification and migrates Chroma collections in batches between source and destination.
+
+Source: Example script; add as `scripts/migrate_vector_and_objects.py`.
+
+**Cutover Plan with Blue/Green (Compose):**
+```bash
+# scripts/blue_green_cutover.sh
+set -euo pipefail
+
+TRACK=${1:-green}   # green or blue
+OTHER=$([ "$TRACK" = "green" ] && echo blue || echo green)
+
+# 1) Start new stack
+docker compose -p govstack-$TRACK up -d
+
+# 2) Health check
+curl -fsS http://localhost:5000/health || { echo "Health failed"; exit 1; }
+
+# 3) Switch proxy (example: nginx upstream file symlink swap)
+ln -sfn /etc/nginx/upstreams/govstack_$TRACK.conf /etc/nginx/conf.d/govstack_upstream.conf
+nginx -s reload
+
+# 4) Retire previous stack
+docker compose -p govstack-$OTHER down
+```
+
+Explanation: Bring up a parallel stack with a different Compose project name, verify health, switch Nginx upstream to the new stack, then shut down the old one. Achieves zero-downtime cutover without Kubernetes.
+
+Source: Example script (not yet in repo). Nginx managed outside of Compose.
+
+Recommended image: Migration workflow diagram with validation checkpoints
 
 ---
 
 Slide 17 — Operational Playbooks
 
-- Runbook examples:
-  - Restoring Postgres from backup
-  - Recovering MinIO bucket
-  - Rebuilding a vector index from raw documents
-- Include checklists and contact points
+**Runbook: Restore PostgreSQL from Backup**
+```bash
+# runbooks/restore_postgres.sh
+set -euo pipefail
 
-Recommended image: Runbook screenshot or template
+BACKUP_FILE="$1"                       # e.g. /backups/prod_2025-08-01.sql.gz
+TARGET_DB_URL="$2"                     # postgresql://user:pass@host:5432/db
+
+echo "Stopping API to prevent writes..."
+docker compose -p govstack-production stop govstack-server
+
+echo "Restoring database..."
+gunzip -c "$BACKUP_FILE" | psql "$TARGET_DB_URL" -v ON_ERROR_STOP=1
+
+echo "Running migrations to head..."
+alembic upgrade head
+
+echo "Starting API..."
+docker compose -p govstack-production up -d govstack-server
+
+echo "Verifying health..."
+curl -f http://localhost:5000/health
+
+Explanation: This runbook pauses writes by stopping the API container via Compose, restores Postgres from a backup, runs Alembic migrations, and brings the API back online with a health check.
+
+Source: Compose stack defined in `docker-compose.yml`; migrations via Alembic.
+```
+
+**Runbook: Rebuild Vector Index from Raw Documents**
+```python
+# runbooks/rebuild_vector_index.py
+import asyncio
+from analytics.services import ChunkingService, EmbeddingService, ChromaClient
+
+async def rebuild(collection_id: str):
+  chunker = ChunkingService()
+  embedder = EmbeddingService()
+  chroma = ChromaClient()
+    
+  docs = await load_documents_from_postgres(collection_id)
+  for doc in docs:
+    chunks = chunker.create_semantic_chunks(doc)
+    embeddings = await embedder.embed_documents([c.text for c in chunks])
+    await chroma.upsert(collection_id, chunks, embeddings)
+
+if __name__ == "__main__":
+  asyncio.run(rebuild("govstack_docs"))
+```
+
+Explanation: Rebuilds a vector collection end-to-end from canonical documents in Postgres using the chunker and embedder services.
+
+Source: Example runbook; add under `runbooks/rebuild_vector_index.py`.
+
+Checklist: Incident Communication
+- Severity classification (SEV1-SEV4)
+- Stakeholders: engineering on-call, product owner, security
+- Channels: #govstack-incident Slack, Statuspage update, incident ticket
+
+Recommended image: Runbook template screenshot
 
 ---
 
-Slide 18 — Compliance & Data Governance (Short)
+Slide 18 — Compliance & Data Governance
 
-- Data residency, audit logging, and retention policies
-- Regular data inventories and access reviews
-- Automate exports for compliance audits
+**Automated Retention Enforcement:**
+```sql
+-- scripts/retention.sql
+-- Example: purge audit logs after 365 days (if policy allows)
+CREATE OR REPLACE PROCEDURE purge_old_audit_logs(days INT)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  DELETE FROM audit_logs WHERE created_at < NOW() - (days || ' days')::interval;
+  RAISE NOTICE 'Purged old audit logs older than % days', days;
+END;
+$$;
+```
 
-Recommended image: Compliance checklist
+Explanation: Defines a stored procedure to purge audit logs older than a policy-defined threshold; schedule via cron or a maintenance job.
+
+Source: Example SQL; add under `scripts/retention.sql`.
+
+**Access Review Report Generator:**
+```python
+# scripts/access_review_report.py
+import csv, os
+from app.db.database import async_session_maker
+
+async def generate_access_report(out_path: str = "/tmp/access_review.csv"):
+    async with async_session_maker() as db:
+        result = await db.execute(text("""
+            SELECT user_id, role, last_login, active
+            FROM users
+            ORDER BY role, user_id
+        """))
+        rows = result.fetchall()
+        with open(out_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["user_id", "role", "last_login", "active"])
+            for r in rows:
+                writer.writerow([r.user_id, r.role, r.last_login, r.active])
+```
+
+Explanation: Generates a CSV listing users and roles to support periodic access reviews and attestations.
+
+Source: Example script; add under `scripts/access_review_report.py`.
+
+**Data Residency & Encryption (Compose context):**
+```env
+# .env (example)
+REGION=eu-west
+MINIO_SERVER_SIDE_ENCRYPTION=AES256
+DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@postgres:5432/govstackdb
+```
+
+Explanation: Enforces region selection and server-side encryption for storage; Compose loads these environment variables at runtime.
+
+Source: `.env` loaded by `docker-compose.yml`.
+
+Explanation: Enforce residency at the infrastructure/provider layer; for storage, enable server-side encryption and region-specific endpoints. Compose loads these via env files.
+
+Source: `.env` loaded by `docker-compose.yml`.
+
+Recommended image: Compliance workflow with automated checks and reports
 
 ---
 
 Slide 19 — Known Limitations & Future Work
 
-- Vector DB vendor lock-in risk — plan for exportable formats
-- Index rebuilding time for large corpora — incremental indexing strategies
-- Observability gaps (more traces, synthetic tests)
+Current limitations
+- Vector DB feature variance: standardize on export schema; build migration adapters
+- Long-running index builds: add incremental and background compaction tasks
+- Observability: add distributed tracing (OpenTelemetry) and synthetic probes
+- Multi-tenant isolation: evaluate hard isolation per namespace for strict tenants
 
-Recommended image: Roadmap items list
+Future work
+- Hybrid search (BM25 + embeddings) with reranking for accuracy
+- Advanced retention: per-collection tiering to S3 Glacier equivalents
+- Cost-aware scheduler: autoscale on queue depth and cost signals
+
+Recommended image: Roadmap timeline with milestones
 
 ---
 
 Slide 20 — Closing & Resources
 
-- Repo pointers: `docker-compose.dev.yml`, `scripts/`, `docs/` (`LLAMAINDEX_ORCHESTRATOR.md`, `implementation_status.md`)
-- Next steps: deploy to staging, run DR rehearsals, define RTO/RPO targets
+Resources
+- Docs: `docs/` (ANALYTICS_INTEGRATION.md, LLAMAINDEX_ORCHESTRATOR.md, SECURITY.md)
+- Deployment: `docker/`, `docker-compose.yml`
+- Scripts: `scripts/` (backup_service.sh, migrate_chat_tables.py, event_cleanup.py)
+
+Next steps
+- Promote to staging via Compose, validate SLOs, then promote to prod
+- Schedule quarterly DR drills; define/verify RTO/RPO targets
 
 Contact: paul@think.ke
 
