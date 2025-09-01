@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..schemas import TrafficMetrics, SessionDuration, SystemHealth, PeakHoursResponse, ErrorAnalysis, HourlyTrafficPoint, ResponseTimesPoint
+from ..schemas import TrafficMetrics, SessionDuration, SystemHealth, PeakHoursResponse, ErrorAnalysis, HourlyTrafficPoint, ResponseTimesPoint, CapacityMetrics
 from ..services import AnalyticsService
 
 router = APIRouter()
@@ -92,7 +92,7 @@ async def get_peak_hours_analysis(
         timezone="UTC"
     )
 
-@router.get("/capacity")
+@router.get("/capacity", response_model=CapacityMetrics, summary="System capacity & scaling", description="Current load, utilization and scaling recommendations.")
 async def get_capacity_metrics(
     db: AsyncSession = Depends(get_db)
 ):
@@ -104,13 +104,13 @@ async def get_capacity_metrics(
     - Capacity utilization
     - Scaling recommendations
     """
-    return {
-        "current_load": "moderate",
-        "capacity_utilization": 65.3,
-        "concurrent_sessions": 45,
-        "scaling_status": "adequate",
-        "recommendations": []
-    }
+    return CapacityMetrics(
+        current_load="moderate",
+        capacity_utilization=65.3,
+        concurrent_sessions=45,
+        scaling_status="adequate",
+        recommendations=[],
+    )
 
 @router.get("/hourly-traffic", response_model=List[HourlyTrafficPoint])
 async def get_hourly_traffic(

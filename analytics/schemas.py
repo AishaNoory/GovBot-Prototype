@@ -4,7 +4,7 @@ Pydantic schemas for analytics API responses.
 
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 # Base response models
 class TimeRange(BaseModel):
@@ -27,6 +27,13 @@ class DistributionData(BaseModel):
 
 # User Analytics Schemas
 class UserDemographics(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "examples": [{
+            "total_users": 1200, "new_users": 180, "returning_users": 420,
+            "active_users": 560, "user_growth_rate": 12.4
+        }],
+        "x-tooltip": "Counts may be aggregated across the selected period.",
+    })
     total_users: int
     new_users: int
     returning_users: int
@@ -41,6 +48,9 @@ class SessionFrequency(BaseModel):
     user_lifespan_days: int
 
 class UserSentiment(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "x-tooltip": "Composite metrics combine inferred sentiment with explicit ratings when available.",
+    })
     positive_conversations: int
     negative_conversations: int
     neutral_conversations: int
@@ -58,6 +68,14 @@ class UserSentiment(BaseModel):
 
 # Usage Analytics Schemas
 class TrafficMetrics(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "examples": [{
+            "total_sessions": 2400, "total_messages": 16800, "unique_users": 1350,
+            "peak_hours": [{"hour": 10, "sessions": 180}, {"hour": 11, "sessions": 200}],
+            "growth_trend": []
+        }],
+        "x-tooltip": "peak_hours shows busiest UTC hours over the window.",
+    })
     total_sessions: int
     total_messages: int
     unique_users: int
@@ -65,11 +83,17 @@ class TrafficMetrics(BaseModel):
     growth_trend: List[TrendData]
 
 class SessionDuration(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "x-tooltip": "Durations are in minutes; distribution buckets vary by range.",
+    })
     average_duration_minutes: float
     median_duration_minutes: float
     duration_distribution: List[DistributionData]
 
 class SystemHealth(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "x-tooltip": "API response times in ms; uptime in % over the last 24h.",
+    })
     api_response_time_p50: float
     api_response_time_p95: float
     api_response_time_p99: float
@@ -79,18 +103,32 @@ class SystemHealth(BaseModel):
 
 # Conversation Analytics Schemas
 class IntentAnalysis(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "examples": [{"intent": "document_request", "frequency": 150, "success_rate": 85.5, "average_turns": 2.3}],
+        "x-tooltip": "Intent examples are illustrative in dev until classifiers are enabled.",
+    })
     intent: str
     frequency: int
     success_rate: float
     average_turns: float
 
 class ConversationFlow(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "x-tooltip": "Turn-number buckets summarize multi-turn completion/abandonment.",
+    })
     turn_number: int
     completion_rate: float
     abandonment_rate: float
     average_response_time: float
 
 class DocumentRetrieval(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "examples": [{
+            "document_type": "policy_documents", "access_frequency": 180,
+            "success_rate": 88.7, "collection_id": "policies_2024"
+        }],
+        "x-tooltip": "collection_id corresponds to the RAG index/collection.",
+    })
     document_type: str
     access_frequency: int
     success_rate: float
@@ -145,6 +183,13 @@ class BusinessIntelligenceDashboard(BaseModel):
 
 # User - Retention
 class RetentionData(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "examples": [{
+            "day_1_retention": 65.5, "day_7_retention": 42.3, "day_30_retention": 28.7,
+            "cohort_analysis": []
+        }],
+        "x-tooltip": "Retention shown as percentages (0-100).",
+    })
     day_1_retention: float
     day_7_retention: float
     day_30_retention: float
@@ -162,22 +207,38 @@ class DeviceDistribution(BaseModel):
 
 # Usage - Hourly traffic and response times
 class HourlyTrafficPoint(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "x-tooltip": "Hour is UTC in 24h format; sessions/messages aggregated over the window.",
+    })
     hour: str  # "00".."23"
     sessions: int
     messages: int
 
 class ResponseTimesPoint(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "x-tooltip": "Response times in milliseconds; daily percentiles.",
+    })
     day: datetime | str  # ISO date or date string
     p50: float
     p95: float
     p99: float
 
 class PeakHoursResponse(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "x-tooltip": "peak_hours is a ranked list of busy hours across the analysis period.",
+    })
     peak_hours: List[Dict[str, int]]  # {hour, sessions}
     analysis_period: str
     timezone: str
 
 class ErrorAnalysis(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "examples": [{
+            "error_rate": 2.1, "total_errors": 15,
+            "error_types": {"4xx_errors": 8, "5xx_errors": 7, "timeout_errors": 0},
+            "analysis_period": "24 hours"
+        }],
+    })
     error_rate: float
     total_errors: int
     error_types: Dict[str, int]
@@ -189,10 +250,16 @@ class DropOffPoint(BaseModel):
     abandonment_rate: float
 
 class DropOffData(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "x-tooltip": "Abandonment rates by turn number; demo values in dev.",
+    })
     drop_off_points: List[DropOffPoint]
     common_triggers: List[str]
 
 class SentimentTrends(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "x-tooltip": "Percentages across all analyzed messages during the period.",
+    })
     sentiment_distribution: Dict[str, float]  # {positive, neutral, negative} as percentages
     satisfaction_indicators: List[str]
 
@@ -203,10 +270,33 @@ class KnowledgeGap(BaseModel):
     example_queries: List[str]
 
 class KnowledgeGaps(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "x-tooltip": "Lower success_rate topics indicate potential content gaps.",
+    })
     knowledge_gaps: List[KnowledgeGap]
     recommendations: Optional[List[str]] = None
 
 class ConversationSummary(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "x-tooltip": "completion_rate is an estimate derived from flow buckets.",
+    })
     total_conversations: int
     avg_turns: float
     completion_rate: float
+
+# System Capacity metrics (Usage)
+class CapacityMetrics(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "examples": [{
+            "current_load": "moderate",
+            "capacity_utilization": 65.3,
+            "concurrent_sessions": 45,
+            "scaling_status": "adequate",
+            "recommendations": []
+        }]
+    })
+    current_load: str
+    capacity_utilization: float
+    concurrent_sessions: int
+    scaling_status: str
+    recommendations: List[str]
