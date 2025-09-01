@@ -319,17 +319,17 @@ Note: maintain existing models; only add the above. Where dates are returned as 
 ## 9. Implementation Checklist (Prioritized)
 
 1) Schemas
-- [ ] Add new Pydantic models listed in Section 4 to `schemas.py`.
-- [ ] Update existing endpoints to use these models where applicable (retention, errors, peak-hours, sentiment-trends, knowledge-gaps, drop-offs).
-- [ ] Normalize `knowledge_gaps.success_rate` to percentage.
+- [x] Add new Pydantic models listed in Section 4 to `schemas.py`.
+- [x] Update existing endpoints to use these models where applicable (retention, errors, peak-hours, sentiment-trends, knowledge-gaps, drop-offs).
+- [x] Normalize `knowledge_gaps.success_rate` to percentage.
 
 2) Conversation
-- [ ] Implement `GET /analytics/conversation/summary` using DB aggregations.
-- [ ] Ensure `/analytics/conversation/flows` still returns buckets; no change to model.
+- [x] Implement `GET /analytics/conversation/summary` using DB aggregations.
+- [x] Ensure `/analytics/conversation/flows` still returns buckets; no change to model.
 
 3) Usage time-series
-- [ ] Implement `GET /analytics/usage/hourly-traffic?days=N` (aggregate by hour).
-- [ ] Implement `GET /analytics/usage/response-times?days=N` (real or approximated series).
+- [x] Implement `GET /analytics/usage/hourly-traffic?days=N` (aggregate by hour).
+- [x] Implement `GET /analytics/usage/response-times?days=N` (real or approximated series).
 - [ ] (Optional) Implement `GET /analytics/usage/peak-days?days=N` or derive in code.
 
 4) User enrichments
