@@ -304,6 +304,56 @@ def create_llamaindex_tools(agencies: Optional[Union[str, List[str]]] = None) ->
     return selected_tools
 
 
+def _derive_bot_name(agencies: Optional[Union[str, List[str]]]) -> str:
+    """Return a custom bot name based on the agency filter."""
+    base = "GovBot"
+    if agencies is None:
+        return base
+    if isinstance(agencies, str):
+        return f"{base}-{agencies.upper()}"
+    if isinstance(agencies, list) and agencies:
+        suffix = "-".join(a.upper() for a in agencies)
+        return f"{base}-{suffix}"
+    return base
+
+
+def build_system_prompt(agencies: Optional[Union[str, List[str]]] = None) -> str:
+    """
+    Build a system prompt tailored to the provided agency/agencies.
+    - Customizes the bot name per agency.
+    - Adds a brief agency focus note.
+    - Falls back to the original prompt when no agency is specified.
+    The returned string still contains the {collections} placeholder for later formatting.
+    """
+    prompt = SYSTEM_PROMPT
+    # Customize name everywhere the base prompt references GovBot
+    bot_name = _derive_bot_name(agencies)
+    prompt = prompt.replace("GovBot", bot_name)
+
+    # Add agency focus and strict guardrails. Keep the collections placeholder intact.
+    if agencies:
+        if isinstance(agencies, str):
+            agency_key = agencies.upper()
+            agency_note = (
+                f"\n\nAgency focus: This assistant is specialized for the {agency_key} collection and related services."
+                f"\n\nSTRICT AGENCY GUARDRAILS\n"
+                f"- Only answer questions that are clearly within the scope of {agency_key} and its official mandate.\n"
+                f"- If a question is outside {agency_key}'s scope (or ambiguous), DO NOT answer it. Respond instead with: \"I'm {bot_name}, and I'm specialized in {agency_key}. I can't help with unrelated topics. Please ask about {agency_key}-related services or policies.\"\n"
+                f"- Prioritize information from the {agency_key} collection(s). Do not reference other agencies unless explicitly asked to compare with {agency_key}.\n"
+            )
+        else:
+            joined = ", ".join(a.upper() for a in agencies)
+            agency_note = (
+                f"\n\nAgency focus: This assistant is specialized for the following collections: {joined}."
+                f"\n\nSTRICT AGENCY GUARDRAILS\n"
+                f"- Only answer questions that are clearly within the scope of these agencies: {joined}.\n"
+                f"- If a question is outside these agencies' scope (or ambiguous), DO NOT answer it. Respond instead with: \"I'm {bot_name}, and I'm specialized in {joined}. I can't help with unrelated topics. Please ask about these agencies' services or policies.\"\n"
+                f"- Prioritize information from the specified collections only. Do not reference other agencies unless explicitly asked to compare with the specified ones.\n"
+            )
+        prompt = prompt + agency_note
+    return prompt
+
+
 def generate_llamaindex_agent(agencies: Optional[Union[str, List[str]]] = None) -> FunctionAgent:
     """
     Generate a LlamaIndex FunctionAgent with tools and system prompt.
@@ -322,8 +372,9 @@ def generate_llamaindex_agent(agencies: Optional[Union[str, List[str]]] = None) 
     # Create tools with optional filtering
     tools = create_llamaindex_tools(agencies)
     
-    # Format system prompt with collection information
-    formatted_system_prompt = SYSTEM_PROMPT.format(
+    # Build and format the system prompt with agency-specific name/context
+    base_prompt = build_system_prompt(agencies)
+    formatted_system_prompt = base_prompt.format(
         collections=yaml.dump(collection_dict) if collection_dict else "No collections available"
     )
     
