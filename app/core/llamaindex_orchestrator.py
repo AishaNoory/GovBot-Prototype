@@ -18,6 +18,7 @@ from llama_index.embeddings.openai import OpenAIEmbedding
 from pydantic import BaseModel, Field
 
 from app.utils.prompts import SYSTEM_PROMPT
+from app.utils.fallbacks import get_no_answer_message, get_out_of_scope_message
 from app.core.rag.tool_loader import collection_dict, get_index_dict
 
 # Configure logger
@@ -394,7 +395,7 @@ class LlamaIndexResponseProcessor:
     """Process LlamaIndex agent responses into our expected Output format."""
     
     @staticmethod
-    def process_response(agent_response, retriever_type: str = "unknown") -> Output:
+    def process_response(agent_response, retriever_type: str = "unknown", language: Optional[str] = None) -> Output:
         """
         Convert LlamaIndex agent response to our Output format.
         
@@ -406,15 +407,17 @@ class LlamaIndexResponseProcessor:
             Output object with structured response data
         """
         # Extract the main response text
-        response_text = str(agent_response)
-        
+        response_text = (str(agent_response) or "").strip()
+        if not response_text:
+            response_text = get_no_answer_message(language)
+
         # Extract sources from the response if available
         sources = []
         # TODO: Implement source extraction logic based on response content
-        
+
         # Generate follow-up questions based on the response
         follow_up_questions = LlamaIndexResponseProcessor._generate_follow_up_questions(response_text)
-        
+
         # Create usage information (placeholder for now)
         usage = Usage(
             requests=1,
@@ -423,7 +426,7 @@ class LlamaIndexResponseProcessor:
             total_tokens=0,
             details=UsageDetails()
         )
-        
+
         return Output(
             answer=response_text,
             sources=sources,
@@ -471,7 +474,9 @@ async def run_llamaindex_agent(
     message: str, 
     chat_history: Optional[List[ChatMessage]] = None,
     session_id: Optional[str] = None,
-    agencies: Optional[Union[str, List[str]]] = None
+    agencies: Optional[Union[str, List[str]]] = None,
+    language: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None
 ) -> Output:
     """
     Run the LlamaIndex agent with a message and optional chat history.
@@ -505,6 +510,20 @@ async def run_llamaindex_agent(
     elif any(term in message.lower() for term in ["data", "privacy", "protection"]):
         retriever_type = "odpc"
     
+    # Basic scope guard: if message appears entirely off-topic, return out-of-scope message
+    off_topic_indicators = [
+        "recipe", "football", "movie actor", "dating", "stock tips", "crypto pump"
+    ]
+    if any(t in message.lower() for t in off_topic_indicators):
+        return Output(
+            answer=get_out_of_scope_message(language=language),
+            sources=[],
+            confidence=0.0,
+            retriever_type=retriever_type,
+            usage=Usage(requests=1, request_tokens=0, response_tokens=0, total_tokens=0),
+            recommended_follow_up_questions=[]
+        )
+
     try:
         # Run the agent
         if chat_history:
@@ -518,7 +537,7 @@ async def run_llamaindex_agent(
 
         # Process the response into our expected format
         processed_response = LlamaIndexResponseProcessor.process_response(
-            response, retriever_type=retriever_type
+            response, retriever_type=retriever_type, language=language
         )
         
         logger.info(f"Successfully processed LlamaIndex agent response for session {session_id}")

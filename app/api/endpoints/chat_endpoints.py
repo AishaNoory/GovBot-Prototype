@@ -13,10 +13,14 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter
 from app.db.database import get_db
 from app.utils.chat_persistence import ChatPersistenceService
 from app.core.orchestrator import generate_agent, Output, Source, Usage, UsageDetails
-from app.core.llamaindex_orchestrator import run_llamaindex_agent
+from app.core.orchestrator import run_agent as run_llamaindex_agent
 from app.core.compatibility_orchestrator import convert_pydantic_ai_messages_to_llamaindex
 from app.core.event_orchestrator import generate_agent_with_events, EventTrackingContext
 from app.utils.security import validate_api_key, require_read_permission, require_write_permission, require_delete_permission, APIKeyInfo
+from app.utils.fallbacks import get_no_answer_message
+from app.utils.chat_event_service import ChatEventService
+from app.utils.pii import detect_pii, redact_pii
+from app.utils.fallbacks import get_pii_warning
 
 # Configure logging
 import logging
@@ -30,6 +34,7 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None  # Session ID can be provided by frontend
     user_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    language: Optional[str] = Field(default=None, description="Preferred language code: en, sw (Kiswahili), sheng")
     
     class Config:
         json_schema_extra = {
@@ -142,12 +147,27 @@ async def process_chat(
         # Generate agent using the new LlamaIndex implementation
         agent = generate_agent()
         
+        # Emit event: message received
+        await ChatEventService.create_event(
+            db=db,
+            session_id=session_id,
+            event_type="message_received",
+            event_status="completed",
+            event_data={"language": request.language or request.metadata.get("language") if request.metadata else None}
+        )
+
+        # PII pre-check and redaction for storage; warn user if detected
+        pii_matches = detect_pii(request.message)
+        redacted_user_message = redact_pii(request.message, pii_matches) if pii_matches else request.message
+
         # Process the message with the agent
         # The agent.run method returns a CompatibilityResponse with .output attribute
         response = await agent.run(
-            user_msg=request.message,
+            user_msg=redacted_user_message,
             message_history=chat_history,
-            session_id=session_id
+            session_id=session_id,
+            language=request.language or (request.metadata.get("language") if request.metadata else None),
+            metadata=request.metadata
         )
         
         logger.info(f"Agent response for session {session_id}: {response.output.answer}")
@@ -161,7 +181,7 @@ async def process_chat(
             db=db,
             session_id=session_id,
             message_type="user",
-            message_object={"content": request.message, "metadata": request.metadata or {}}
+            message_object={"content": redacted_user_message, "metadata": request.metadata or {}}
         )
         
         await ChatPersistenceService.save_message(
@@ -170,18 +190,33 @@ async def process_chat(
             message_type="assistant", 
             message_object={
                 "content": agent_output.answer,
-                "sources": [source.dict() for source in agent_output.sources],
+                "sources": [source.model_dump() for source in agent_output.sources],
                 "confidence": agent_output.confidence,
                 "retriever_type": agent_output.retriever_type,
-                "recommended_follow_up_questions": [q.dict() for q in agent_output.recommended_follow_up_questions]
+                "recommended_follow_up_questions": [q.model_dump() for q in agent_output.recommended_follow_up_questions]
             },
             history=response.all_messages()  # Save full conversation history
         )
+
+        # If no sources and very low confidence, log a knowledge gap event
+        if (not agent_output.sources) and (agent_output.confidence is None or agent_output.confidence < 0.2):
+            await ChatEventService.create_event(
+                db=db,
+                session_id=session_id,
+                event_type="knowledge_gap",
+                event_status="completed",
+                event_data={"query": request.message}
+            )
         
+        # If PII was detected, prepend a safety notice to the model's answer (not storing PII)
+        final_answer = agent_output.answer
+        if pii_matches:
+            final_answer = f"{get_pii_warning(request.language or (request.metadata.get('language') if request.metadata else None))}\n\n" + final_answer
+
         # Create the response
         chat_response = ChatResponse(
             session_id=session_id,
-            answer=agent_output.answer,
+            answer=final_answer,
             sources=agent_output.sources,
             confidence=agent_output.confidence,
             retriever_type=agent_output.retriever_type,
@@ -235,7 +270,9 @@ async def process_chat_by_agency(
             message=request.message,
             chat_history=llama_history,
             session_id=session_id,
-            agencies=agency
+            agencies=agency,
+            language=request.language or (request.metadata.get("language") if request.metadata else None),
+            metadata=request.metadata
         )
 
         # Persist user and assistant messages
@@ -252,16 +289,16 @@ async def process_chat_by_agency(
             message_type="assistant",
             message_object={
                 "content": li_response.answer,
-                "sources": [s.dict() for s in li_response.sources],
+                "sources": [s.model_dump() for s in li_response.sources],
                 "confidence": li_response.confidence,
                 "retriever_type": li_response.retriever_type,
-                "recommended_follow_up_questions": [q.dict() for q in li_response.recommended_follow_up_questions],
+                "recommended_follow_up_questions": [q.model_dump() for q in li_response.recommended_follow_up_questions],
             },
             # Save a minimal history compatible with our loader
             history=to_jsonable_python([{"role": "assistant", "content": li_response.answer}])
         )
 
-        # Build API response
+    # Build API response
         return ChatResponse(
             session_id=session_id,
             answer=li_response.answer,

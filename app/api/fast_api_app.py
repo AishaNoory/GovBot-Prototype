@@ -734,6 +734,43 @@ async def get_crawl_status(
         collection_id=task_status.get("collection_id")
     )
 
+@crawler_router.get("/", response_model=List[CrawlStatusResponse])
+async def list_crawl_jobs(
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
+):
+    """
+    List all crawl jobs with their statuses.
+    Requires read permission.
+
+    Returns:
+        A list of crawl job statuses.
+    """
+    try:
+        # Build response objects for all known tasks
+        responses: List[CrawlStatusResponse] = []
+        for tid, status in crawl_tasks.items():
+            responses.append(CrawlStatusResponse(
+                task_id=tid,
+                status=status.get("status", "unknown"),
+                seed_urls=status.get("seed_urls", []),
+                urls_crawled=status.get("urls_crawled"),
+                total_urls_queued=status.get("total_urls_queued"),
+                errors=status.get("errors"),
+                start_time=status.get("start_time"),
+                finished=status.get("finished", False),
+                collection_id=status.get("collection_id")
+            ))
+
+        # Optionally, sort by start_time descending when available
+        def sort_key(item: CrawlStatusResponse):
+            return item.start_time or ""
+
+        responses.sort(key=sort_key, reverse=True)
+        return responses
+    except Exception as e:
+        logger.error(f"Error listing crawl jobs: {e}")
+        raise HTTPException(status_code=500, detail=f"Error listing crawl jobs: {str(e)}")
+
 @webpage_router.post("/fetch-webpage/", response_model=WebpageFetchResponse)
 async def fetch_webpage(
     request: FetchWebpageRequest,

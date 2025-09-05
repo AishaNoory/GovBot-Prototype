@@ -9,13 +9,13 @@ from llama_index.core.base.llms.types import ChatMessage
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 
 from app.core.llamaindex_orchestrator import (
-    run_llamaindex_agent, 
     Output, 
     Source, 
     Usage, 
     UsageDetails, 
     FollowUpQuestion
 )
+from app.core.orchestrator import run_agent as run_llamaindex_agent
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,9 @@ class CompatibilityAgent:
         self, 
         user_msg: str, 
         message_history: Optional[List[ModelMessage]] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        language: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
     ) -> 'CompatibilityResponse':
         """
         Run the agent with a user message and optional message history.
@@ -140,7 +142,9 @@ class CompatibilityAgent:
         response = await run_llamaindex_agent(
             message=user_msg,
             chat_history=chat_history,
-            session_id=session_id
+            session_id=session_id,
+            language=language,
+            metadata=metadata
         )
         
         # Wrap in compatibility response
