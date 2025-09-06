@@ -325,6 +325,11 @@ def create_llamaindex_tools(agencies: Optional[Union[str, List[str]]] = None) ->
         can = alias_map.get(lower)
         if can and str(can) in canonical_to_alias:
             return canonical_to_alias[str(can)]
+        # canonical id direct -> alias or slug handle
+        if lower in meta:
+            info = meta.get(lower, {})
+            name = info.get("collection_name") or info.get("name") or lower
+            return canonical_to_alias.get(lower) or _slugify(name)
         # name -> canonical -> alias/slug
         can2 = name_to_canonical.get(lower)
         if can2:
