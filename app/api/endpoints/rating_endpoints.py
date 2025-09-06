@@ -13,6 +13,7 @@ from app.db.database import get_db
 from app.db.models.message_rating import MessageRating
 from app.db.models.chat import Chat, ChatMessage
 from app.utils.security import require_write_permission, require_read_permission, APIKeyInfo
+from app.utils.pii import redact_pii
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -142,7 +143,7 @@ async def create_rating(
         if existing_rating:
             # Update existing rating
             existing_rating.rating = request.rating
-            existing_rating.feedback_text = request.feedback_text
+            existing_rating.feedback_text = redact_pii(request.feedback_text) if request.feedback_text else None
             existing_rating.rating_metadata = request.metadata
             existing_rating.updated_at = datetime.now(timezone.utc)
             
@@ -169,7 +170,7 @@ async def create_rating(
                 message_id=request.message_id,
                 user_id=request.user_id,
                 rating=request.rating,
-                feedback_text=request.feedback_text,
+                feedback_text=redact_pii(request.feedback_text) if request.feedback_text else None,
                 rating_metadata=request.metadata
             )
             
@@ -254,7 +255,7 @@ async def update_rating(
         if request.rating is not None:
             rating.rating = request.rating
         if request.feedback_text is not None:
-            rating.feedback_text = request.feedback_text
+            rating.feedback_text = redact_pii(request.feedback_text) if request.feedback_text else None
         if request.metadata is not None:
             rating.rating_metadata = request.metadata
         

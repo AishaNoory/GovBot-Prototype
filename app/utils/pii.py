@@ -1,17 +1,24 @@
 """
-Basic PII detection and redaction utilities.
+PII detection and redaction utilities.
 
-This module provides lightweight regex-based detectors for common PII patterns
-so we can warn users and avoid storing/echoing sensitive data.
-
-Note: This is a heuristic pre-filter and not a substitute for a
-full DLP solution. Prefer server-side validation and progressive enhancement.
+This module preserves the simple detect/redact API used across the codebase
+while delegating to Microsoft Presidio for robust detection/anonymization when
+available. If Presidio isn't available at runtime, it falls back to lightweight
+regex-based heuristics for minimal protection.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Pattern, Tuple
+
+try:
+    from app.utils.presidio_pii import analyze_text, redact_text
+    _PRESIDIO_AVAILABLE = True
+except Exception:  # pragma: no cover - runtime fallback
+    analyze_text = None  # type: ignore
+    redact_text = None  # type: ignore
+    _PRESIDIO_AVAILABLE = False
 
 
 @dataclass
@@ -45,21 +52,20 @@ _PATTERNS = _compile_patterns()
 def detect_pii(text: str) -> List[PIIMatch]:
     """Detect likely PII in text and return a list of matches.
 
-    Args:
-        text: Input text to scan.
-
-    Returns:
-        List of PIIMatch entries describing potential PII spans.
+    Prefers Presidio results; falls back to regex heuristics if unavailable.
     """
     if not text:
         return []
 
+    if _PRESIDIO_AVAILABLE and analyze_text is not None:
+        results = analyze_text(text, language="en")
+        return [PIIMatch(kind=r.entity_type.lower(), match=text[r.start:r.end], start=r.start, end=r.end) for r in results]
+
+    # Fallback regex heuristic
     matches: List[PIIMatch] = []
     for kind, pattern in _PATTERNS.items():
         for m in pattern.finditer(text):
-            # Basic filtering to reduce excessive false positives for generic numeric tokens
             if kind in {"national_id", "passport"}:
-                # Skip if the token is part of a URL or email already captured
                 surrounding = text[max(0, m.start()-8): m.end()+8]
                 if "http" in surrounding or "@" in surrounding:
                     continue
@@ -70,20 +76,20 @@ def detect_pii(text: str) -> List[PIIMatch]:
 def redact_pii(text: str, matches: Optional[List[PIIMatch]] = None) -> str:
     """Redact detected PII spans in the text using kind-specific placeholders.
 
-    Args:
-        text: Input text
-        matches: Optional precomputed matches
-
-    Returns:
-        Redacted string
+    Prefers Presidio anonymization; falls back to regex replacement if unavailable.
     """
     if not text:
         return text
+
+    if _PRESIDIO_AVAILABLE and redact_text is not None and matches is None:
+        redacted, _results = redact_text(text, language="en")
+        return redacted
+
+    # Fallback path uses provided matches or regex detection
     matches = matches if matches is not None else detect_pii(text)
     if not matches:
         return text
 
-    # Replace from end to start to keep offsets stable
     redacted = text
     for m in sorted(matches, key=lambda x: x.start, reverse=True):
         placeholder = f"<{m.kind.upper()}_REDACTED>"

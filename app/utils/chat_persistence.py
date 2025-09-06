@@ -12,6 +12,7 @@ from pydantic_core import to_jsonable_python
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 
 from app.db.models.chat import Chat, ChatMessage
+from app.utils.pii import redact_pii
 
 logger = logging.getLogger(__name__)
 
@@ -123,12 +124,28 @@ class ChatPersistenceService:
                 logger.error(f"Chat session {session_id} not found")
                 return False
             
+            # Defense-in-depth: redact user text fields before persisting
+            sanitized_object = message_object
+            try:
+                if message_type == "user":
+                    # Common shapes: {"content": str, ...} or {"query": str, ...}
+                    if isinstance(sanitized_object, dict):
+                        if "content" in sanitized_object and isinstance(sanitized_object["content"], str):
+                            sanitized_object = dict(sanitized_object)
+                            sanitized_object["content"] = redact_pii(sanitized_object["content"])  # type: ignore
+                        if "query" in sanitized_object and isinstance(sanitized_object["query"], str):
+                            sanitized_object = dict(sanitized_object)
+                            sanitized_object["query"] = redact_pii(sanitized_object["query"])  # type: ignore
+            except Exception:
+                # Do not block persistence on redaction errors
+                pass
+
             # Create message
             message = ChatMessage(
                 chat_id=chat.id,
                 message_id=str(uuid4()),
                 message_type=message_type,
-                message_object=to_jsonable_python(message_object),
+                message_object=to_jsonable_python(sanitized_object),
                 history=history,
                 timestamp=datetime.now(timezone.utc)
             )

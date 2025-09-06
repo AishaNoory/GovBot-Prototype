@@ -205,9 +205,10 @@ async def process_chat(
                 session_id=session_id,
                 event_type="knowledge_gap",
                 event_status="completed",
-                event_data={"query": request.message}
+                # Ensure we do not leak raw PII in events
+                event_data={"query": redacted_user_message}
             )
-        
+
         # If PII was detected, prepend a safety notice to the model's answer (not storing PII)
         final_answer = agent_output.answer
         if pii_matches:
@@ -265,9 +266,13 @@ async def process_chat_by_agency(
         history_pydantic = await ChatPersistenceService.load_history(db, session_id)
         llama_history = convert_pydantic_ai_messages_to_llamaindex(history_pydantic) if history_pydantic else None
 
+        # PII pre-check and redaction before processing/storage
+        pii_matches = detect_pii(request.message)
+        redacted_user_message = redact_pii(request.message, pii_matches) if pii_matches else request.message
+
         # Run the LlamaIndex agent directly with agency filter
         li_response: Output = await run_llamaindex_agent(
-            message=request.message,
+            message=redacted_user_message,
             chat_history=llama_history,
             session_id=session_id,
             agencies=agency,
@@ -280,7 +285,7 @@ async def process_chat_by_agency(
             db=db,
             session_id=session_id,
             message_type="user",
-            message_object={"content": request.message, "metadata": request.metadata or {}}
+            message_object={"content": redacted_user_message, "metadata": request.metadata or {}}
         )
 
         await ChatPersistenceService.save_message(
@@ -298,10 +303,15 @@ async def process_chat_by_agency(
             history=to_jsonable_python([{"role": "assistant", "content": li_response.answer}])
         )
 
-    # Build API response
+        # If PII was detected, prepend a safety notice to the model's answer (not storing PII)
+        final_answer = li_response.answer
+        if pii_matches:
+            final_answer = f"{get_pii_warning(request.language or (request.metadata.get('language') if request.metadata else None))}\n\n" + final_answer
+
+        # Build API response
         return ChatResponse(
             session_id=session_id,
-            answer=li_response.answer,
+            answer=final_answer,
             sources=li_response.sources,
             confidence=li_response.confidence,
             retriever_type=li_response.retriever_type,
