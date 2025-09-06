@@ -33,6 +33,7 @@ from app.db.models.audit_log import AuditLog, Base as AuditBase
 from app.core.crawlers.web_crawler import crawl_website
 from app.core.crawlers.utils import get_page_as_markdown
 from app.core.rag.indexer import extract_text_batch, get_collection_stats, start_background_indexing, start_background_document_indexing
+from app.core.rag.vectorstore_admin import delete_embeddings_for_doc
 from app.utils.security import add_api_key_to_docs, validate_api_key, require_read_permission, require_write_permission, require_delete_permission, APIKeyInfo, log_audit_action
 
 import logfire
@@ -436,6 +437,13 @@ async def delete_document(
             "size": document.size
         }
         
+        # Delete embeddings from Chroma by metadata doc_id in the collection
+        try:
+            if document.collection_id:
+                delete_embeddings_for_doc(collection_id=document.collection_id, doc_id=str(document_id))
+        except Exception as ve:
+            logger.warning(f"Failed to delete vectors for doc {document_id}: {ve}")
+
         # Delete from MinIO
         object_name = document.object_name
         minio_client.delete_file(object_name)
@@ -1053,6 +1061,13 @@ async def create_collection(
             api_key_name=api_key_info.name
         )
         
+        # Trigger RAG cache refresh
+        try:
+            from app.core.rag.tool_loader import refresh_collections
+            refresh_collections()
+        except Exception as _e:
+            logger.warning(f"RAG refresh after create failed: {_e}")
+
         # Build response
         return CollectionResponse(
             id=db_obj.id,
@@ -1158,6 +1173,12 @@ async def update_collection(
 
         await db.commit()
         await db.refresh(db_obj)
+        # Trigger RAG cache refresh
+        try:
+            from app.core.rag.tool_loader import refresh_collections
+            refresh_collections()
+        except Exception as _e:
+            logger.warning(f"RAG refresh after update failed: {_e}")
         
         # Log audit action
         await log_audit_action(
@@ -1223,6 +1244,12 @@ async def delete_collection(
         # Delete DB row
         await db.delete(db_obj)
         await db.commit()
+        # Trigger RAG cache refresh
+        try:
+            from app.core.rag.tool_loader import refresh_collections
+            refresh_collections()
+        except Exception as _e:
+            logger.warning(f"RAG refresh after delete failed: {_e}")
         
         # Log audit action
         await log_audit_action(

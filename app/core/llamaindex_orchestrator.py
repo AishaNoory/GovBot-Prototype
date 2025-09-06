@@ -5,7 +5,7 @@ LlamaIndex FunctionAgent implementation to replace Pydantic-AI.
 import os
 import yaml
 import logging
-from typing import List, Optional, Any, Dict, Union
+from typing import List, Optional, Any, Dict, Union, Callable
 from dotenv import load_dotenv
 
 from llama_index.core import Settings
@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from app.utils.prompts import SYSTEM_PROMPT
 from app.utils.fallbacks import get_no_answer_message, get_out_of_scope_message
-from app.core.rag.tool_loader import collection_dict, get_index_dict
+from app.core.rag.tool_loader import collection_dict, get_index_dict, get_alias_map
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -236,73 +236,130 @@ async def query_odpc_tool(query: str) -> str:
 
 def create_llamaindex_tools(agencies: Optional[Union[str, List[str]]] = None) -> List[FunctionTool]:
     """
-    Create LlamaIndex FunctionTool objects from our async tool functions.
-    
-    Args:
-        agencies: Optional agency filter. Can be:
-                 - None: Returns all tools
-                 - str: Returns tool for single agency (e.g., "kfc", "kfcb", "brs", "odpc")
-                 - List[str]: Returns tools for multiple agencies
-    
-    Returns:
-        List of FunctionTool objects filtered by agencies
+    Create FunctionTool objects dynamically from collections. Supports filtering by:
+    - alias (e.g., kfc)
+    - canonical collection ID (UUID)
+    - collection name (case-insensitive)
     """
-    # Define all available tools
-    all_tools = {
-        "kfc": FunctionTool.from_defaults(
-            async_fn=query_kfc_tool,
-            name="query_kfc",
-            description="Query the Kenya Film Commission collection for information about film industry services, support, licensing, and regulations in Kenya."
-        ),
-        "kfcb": FunctionTool.from_defaults(
-            async_fn=query_kfcb_tool,
-            name="query_kfcb", 
-            description="Query the Kenya Film Classification Board collection for information about film classification, content regulation, and broadcast compliance in Kenya."
-        ),
-        "brs": FunctionTool.from_defaults(
-            async_fn=query_brs_tool,
-            name="query_brs",
-            description="Query the Business Registration Service collection for information about business registration, company formation, and related government services in Kenya."
-        ),
-        "odpc": FunctionTool.from_defaults(
-            async_fn=query_odpc_tool,
-            name="query_odpc",
-            description="Query the Office of the Data Protection Commissioner collection for information about data protection laws, privacy rights, and compliance requirements in Kenya."
-        )
-    }
-    
-    # Filter tools based on agencies parameter
+
+    def _slugify(text: str) -> str:
+        import re
+        s = text.lower()
+        s = re.sub(r"[^a-z0-9]+", "_", s).strip("_")
+        return s or "collection"
+
+    # Ensure metadata is loaded
+    meta = collection_dict or {}
+    alias_map = get_alias_map()  # alias -> canonical
+    # Prefer stable alias names where available for tool naming
+    preferred_alias_order = ["kfc", "kfcb", "brs", "odpc"]
+    canonical_to_alias: Dict[str, str] = {}
+    for alias in preferred_alias_order:
+        can = alias_map.get(alias)
+        if can:
+            canonical_to_alias[str(can)] = alias
+
+    # Build a reverse lookup for names -> canonical id
+    name_to_canonical: Dict[str, str] = {}
+    for cid, info in meta.items():
+        name = info.get("collection_name") or info.get("name") or str(cid)
+        name_to_canonical[name.lower()] = str(cid)
+
+    # Build dynamic async functions per collection key
+    def _make_query_fn(key: str, display_name: str) -> Callable[[str], Any]:
+        async def _fn(query: str) -> str:
+            try:
+                indexes = get_index_dict()
+                index = indexes[key]
+                retriever = index.as_retriever(similarity_top_k=3)
+                nodes = await retriever.aretrieve(query)
+                if not nodes:
+                    return f"No relevant information found in the {display_name} collection."
+                parts = []
+                for i, node in enumerate(nodes[:3]):
+                    text = getattr(node, "text", "")
+                    parts.append(f"Source {i+1}: {text[:500]}...")
+                return f"{display_name} Information:\n\n" + "\n\n".join(parts)
+            except Exception as e:
+                logger.error(f"Error querying {display_name} ({key}): {e}")
+                return f"Error retrieving information from {display_name}: {str(e)}"
+
+        return _fn
+
+    # Construct all available tools
+    dynamic_tools: Dict[str, FunctionTool] = {}
+    for cid, info in meta.items():
+        canonical = str(cid)
+        display = info.get("collection_name") or info.get("name") or canonical
+        # choose stable handle
+        handle = canonical_to_alias.get(canonical) or _slugify(display)
+        tool_name = f"query_{handle}"
+        async_fn = _make_query_fn(handle if handle in get_index_dict() else canonical, display)
+        desc = f"Query the {display} collection for information relevant to its domain."
+        dynamic_tools[handle] = FunctionTool.from_defaults(async_fn=async_fn, name=tool_name, description=desc)
+
+    # Maintain legacy aliases explicitly if they exist in index dict (ensures backwards compat)
+    for alias in ["kfc", "kfcb", "brs", "odpc"]:
+        if alias in dynamic_tools:
+            continue
+        if alias in get_index_dict():
+            # create a thin wrapper pointing to alias key
+            display = alias.upper()
+            async_fn = _make_query_fn(alias, display)
+            dynamic_tools[alias] = FunctionTool.from_defaults(
+                async_fn=async_fn,
+                name=f"query_{alias}",
+                description=f"Query the {display} collection."
+            )
+
+    # Filtering logic
+    def _resolve_to_handle(token: str) -> Optional[str]:
+        t = (token or "").strip()
+        if not t:
+            return None
+        lower = t.lower()
+        # alias direct
+        if lower in dynamic_tools:
+            return lower
+        # alias -> canonical -> alias
+        can = alias_map.get(lower)
+        if can and str(can) in canonical_to_alias:
+            return canonical_to_alias[str(can)]
+        # name -> canonical -> alias/slug
+        can2 = name_to_canonical.get(lower)
+        if can2:
+            return canonical_to_alias.get(str(can2)) or _slugify(meta[can2]["collection_name"]) if meta.get(can2) else None
+        # canonical id -> alias/slug
+        if lower in canonical_to_alias:
+            return canonical_to_alias[lower]
+        return None
+
     if agencies is None:
-        # Return all tools
-        selected_tools = list(all_tools.values())
+        selected = list(dynamic_tools.values())
     elif isinstance(agencies, str):
-        # Single agency
-        agencies_lower = agencies.lower()
-        if agencies_lower in all_tools:
-            selected_tools = [all_tools[agencies_lower]]
+        handle = _resolve_to_handle(agencies)
+        if handle and handle in dynamic_tools:
+            selected = [dynamic_tools[handle]]
         else:
-            logger.warning(f"Unknown agency '{agencies}'. Available agencies: {list(all_tools.keys())}")
-            selected_tools = list(all_tools.values())
+            logger.warning(f"Unknown agency '{agencies}'. Returning all tools.")
+            selected = list(dynamic_tools.values())
     elif isinstance(agencies, list):
-        # Multiple agencies
-        selected_tools = []
-        for agency in agencies:
-            agency_lower = agency.lower()
-            if agency_lower in all_tools:
-                selected_tools.append(all_tools[agency_lower])
+        selected = []
+        for a in agencies:
+            handle = _resolve_to_handle(a)
+            if handle and handle in dynamic_tools:
+                selected.append(dynamic_tools[handle])
             else:
-                logger.warning(f"Unknown agency '{agency}'. Available agencies: {list(all_tools.keys())}")
-        
-        # If no valid agencies were found, return all tools
-        if not selected_tools:
+                logger.warning(f"Unknown agency '{a}'. Skipping.")
+        if not selected:
             logger.warning("No valid agencies found. Returning all tools.")
-            selected_tools = list(all_tools.values())
+            selected = list(dynamic_tools.values())
     else:
         logger.warning(f"Invalid agencies parameter type: {type(agencies)}. Returning all tools.")
-        selected_tools = list(all_tools.values())
-    
-    logger.info(f"Created {len(selected_tools)} LlamaIndex FunctionTools for agencies: {agencies}")
-    return selected_tools
+        selected = list(dynamic_tools.values())
+
+    logger.info(f"Created {len(selected)} dynamic FunctionTools for agencies: {agencies}")
+    return selected
 
 
 def _derive_bot_name(agencies: Optional[Union[str, List[str]]]) -> str:
