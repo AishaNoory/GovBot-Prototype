@@ -8,12 +8,10 @@
 - Ensure that deleting a document/webpage also deletes its embeddings from ChromaDB.
 
 ## Current gaps (summary)
-- Collections are in-memory (`collections_storage`) and `app/core/rag/tool_loader.py` uses static `collection_dict`.
-- Documents lack an update endpoint; webpages lack delete endpoint.
-- Indexing progress for uploaded documents is not aggregated; webpages progress exists but percentage formula appears incorrect.
-- No indexing job status endpoint; only crawl job status is tracked in-memory.
-- Assistant/collection metrics are limited; analytics service not integrated in main API nor scoped per assistant.
-- Deleting a document does not remove its ChromaDB vectors.
+- Indexing job status (queue/task tracking) is not implemented; only background kicks without durable status.
+- Analytics router is not mounted in the main API and isn’t scoped by collection/assistant yet.
+- No PATCH variant for documents (PUT covers file/metadata updates via form fields).
+- Test coverage missing for new deletion/indexing flows.
 
 ## Work plan (checklist)
 
@@ -38,20 +36,21 @@
 - [ ] Optional: add a single generic retrieval tool name for all collections. (Deferred)
 
 4) Document CRUD and Chroma deletion
-- [ ] Add PUT/PATCH `/documents/{id}` to update metadata and (optionally) replace the file. If file replaced: re-upload to MinIO, mark `is_indexed=False`, and trigger background re-indexing for the document's collection. (Pending)
+- [x] Add PUT `/documents/{id}` to update metadata and (optionally) replace the file. If file replaced: re-upload to MinIO, mark `is_indexed=False`, delete vectors by `doc_id`, and trigger background re-indexing for the document's collection.
+- [ ] Optional: add PATCH `/documents/{id}` (JSON body) for partial metadata updates without multipart. (Deferred)
 - [x] Implement Chroma deletion on DELETE `/documents/{id}`:
   - [x] Utility: `delete_embeddings_for_doc(collection_id, doc_id)` added in `vectorstore_admin.py`.
   - [x] Called prior to MinIO + DB deletion; idempotent.
   - [x] Indexer uses `doc_id` metadata.
 
 5) Webpage deletion and Chroma deletion
-- [ ] Add DELETE `/webpages/{id}` to remove webpage row and its vectors. (In progress)
-- [ ] Optional: Add POST `/webpages/{id}/recrawl` to update a single page; mark `is_indexed=False`.
+- [x] Add DELETE `/webpages/{id}` to remove webpage row and its vectors.
+- [x] Add POST `/webpages/{id}`/recrawl to mark a single page for reprocess; sets `is_indexed=False` and clears `indexed_at`.
 
 6) Indexing progress endpoints
-- [ ] Uploaded docs: Add GET `/documents/indexing-status?collection_id=...` returning `{ indexed, unindexed, progress_percent }`. (In progress)
-- [ ] Webpages: Fix progress calculation in `/collection-stats/{collection_id}` (use `* 100`). (In progress)
-- [ ] Add unified GET `/collection-stats/{id}/indexing-status` merging docs + webpages. (Planned)
+- [x] Uploaded docs: Add GET `/documents/indexing-status?collection_id=...` returning `{ indexed, unindexed, progress_percent }`.
+- [x] Webpages: Fix progress calculation (percentage now computed with `* 100`).
+- [x] Add unified GET `/collection-stats/{id}/indexing-status` merging docs + webpages.
 
 7) Indexing job status tracking (optional but recommended)
 - [ ] Introduce in-memory (or DB-backed) tracker for indexing tasks, like `crawl_tasks`.
@@ -67,6 +66,7 @@
 - [x] Use `collection_id` as Chroma collection name; alias pointers map to canonical.
 - [x] Ensure ingestion metadata includes `doc_id` and `collection_id` (present); leveraged for delete.
 - [x] Added `vectorstore_admin.py` for admin deletes.
+ - [x] Dynamic tools generated from DB collections; automatic refresh on collection create/update/delete; legacy aliases supported; canonical UUIDs accepted.
 
 10) Tests
 - [ ] Unit test: delete-document removes rows from Chroma.
@@ -77,7 +77,8 @@
 
 ## API changes (proposed)
 - Documents
-  - PUT/PATCH `/documents/{id}`: update metadata and optional file; reindex when file changes.
+  - PUT `/documents/{id}`: update metadata and optional file; reindex and delete vectors when file changes.
+  - PATCH `/documents/{id}` (optional): partial metadata update without multipart.
   - GET `/documents/indexing-status?collection_id=...`: aggregate indexing status for uploads.
 - Webpages
   - DELETE `/webpages/{id}`: delete page and its embeddings.
@@ -125,6 +126,21 @@
 - Phase 6: Tool loader/orchestrator reading from DB.
 - Phase 7: Analytics mounting + filters.
 - Phase 8: Tests and docs.
+
+## Completed recently
+- Alembic initialized and baseline + collections migrations added/applied.
+- Collections persisted in DB with CRUD; counts computed via DB queries; seeding script added.
+- RAG/tooling reads collections from DB; alias mapping preserved; canonical UUIDs accepted; auto-refresh on collection changes.
+- DELETE `/documents/{id}` removes vectors (by `doc_id`), MinIO object, and DB row.
+- PUT `/documents/{id}` updates metadata and optional file; clears vectors and reindexes when file changes.
+- DELETE `/webpages/{id}` removes vectors and the DB row; POST `/webpages/{id}/recrawl` marks for reprocess.
+- Indexing status endpoints for documents and combined collection stats implemented; webpage percentage fix applied.
+
+## Next steps
+- Add optional PATCH `/documents/{id}` (JSON) for partial updates (low risk).
+- Add durable indexing job tracking endpoints (task queue + status) and optional `/collections/{id}/index` trigger.
+- Mount analytics router under `/analytics` with optional `collection_id`/`assistant` filters.
+- Add tests: vector deletion (docs/webpages), indexing status accuracy, and dynamic tool generation prompt content.
 
 ## Alembic setup and migration plan
 

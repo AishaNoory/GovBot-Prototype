@@ -9,7 +9,7 @@ load_dotenv()
 import os
 import logging
 from io import BytesIO
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query, APIRouter, Request
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query, APIRouter, Request, Path
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone, timedelta
 import uuid
@@ -405,6 +405,138 @@ async def list_documents_by_collection(
         logger.error(f"Error listing documents for collection {collection_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error listing documents for collection: {str(e)}")
 
+@document_router.put("/{document_id}", 
+                    summary="Update document",
+                    description="Update document metadata and optionally replace the file. File replacement triggers vector cleanup and reindexing.",
+                    responses={
+                        200: {"description": "Document updated successfully"},
+                        404: {"description": "Document not found"},
+                        403: {"description": "Insufficient permissions"},
+                        500: {"description": "Internal server error"}
+                    })
+async def update_document(
+    document_id: int,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: Optional[UploadFile] = File(None),
+    description: Optional[str] = Form(None),
+    is_public: Optional[bool] = Form(None),
+    collection_id: Optional[str] = Form(None),
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_write_permission)
+):
+    """
+    Update a document's metadata and optionally replace the file.
+    
+    **Parameters:**
+    - **document_id**: ID of the document to update
+    - **file**: New file to replace existing document (optional)  
+    - **description**: Updated description text (optional)
+    - **is_public**: Updated visibility flag (optional)
+    - **collection_id**: Collection ID to move document to (optional)
+    
+    **Side Effects:**
+    - If `file` provided: uploads new file, deletes old file, clears vector embeddings by doc_id, sets `is_indexed=false`, triggers background reindexing
+    - If `collection_id` changes: deletes vectors from old collection, sets `is_indexed=false`, triggers reindexing in new collection
+    - Creates audit log entry
+    
+    **Permissions:** Requires `write` permission
+    
+    **Returns:** Updated document metadata with indexing status
+    """
+    try:
+        doc = await db.get(Document, document_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        changes: Dict[str, Any] = {}
+
+        # Handle file replacement
+        if file is not None:
+            import uuid, os
+            safe_name = file.filename or ""
+            file_extension = os.path.splitext(safe_name)[1] if "." in safe_name else ""
+            new_object_name = f"{uuid.uuid4()}{file_extension}"
+            # upload new
+            content = await file.read()
+            file_obj = BytesIO(content)
+            minio_client.upload_file(
+                file_obj=file_obj,
+                object_name=new_object_name,
+                content_type=file.content_type or "application/octet-stream",
+            )
+            # remove old object
+            try:
+                if doc.object_name:  # type: ignore[attr-defined]
+                    minio_client.delete_file(str(doc.object_name))
+            except Exception as ve:
+                logger.warning(f"Failed to delete old object for doc {document_id}: {ve}")
+            # update doc fields
+            doc.object_name = new_object_name
+            doc.filename = file.filename or safe_name
+            doc.content_type = file.content_type or "application/octet-stream"
+            doc.size = len(content)
+            doc.is_indexed = False
+            doc.indexed_at = None
+            changes["file_replaced"] = True
+            # delete any existing embeddings for this document in its current collection
+            try:
+                if doc.collection_id is not None:
+                    delete_embeddings_for_doc(collection_id=str(doc.collection_id), doc_id=str(document_id))
+            except Exception as ve:
+                logger.warning(f"Failed to delete embeddings for doc {document_id} on replace: {ve}")
+
+        # Metadata updates
+        if description is not None and description != doc.description:
+            changes["description"] = {"old": doc.description, "new": description}
+            doc.description = description
+        if is_public is not None and is_public != doc.is_public:
+            changes["is_public"] = {"old": doc.is_public, "new": is_public}
+            doc.is_public = bool(is_public)
+        if collection_id is not None and collection_id != doc.collection_id:
+            old_cid = str(doc.collection_id) if doc.collection_id is not None else None
+            changes["collection_id"] = {"old": doc.collection_id, "new": collection_id}
+            doc.collection_id = collection_id
+            # collection change implies reindex and cleanup old vectors
+            doc.is_indexed = False
+            doc.indexed_at = None
+            if old_cid:
+                try:
+                    delete_embeddings_for_doc(collection_id=old_cid, doc_id=str(document_id))
+                except Exception as ve:
+                    logger.warning(f"Failed to delete embeddings for doc {document_id} in old collection {old_cid}: {ve}")
+
+        doc.updated_by = api_key_info.get_user_id()
+
+        await db.commit()
+        await db.refresh(doc)
+
+        # Audit log
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="update",
+            resource_type="document",
+            resource_id=str(document_id),
+            details={"changes": changes},
+            request=request,
+            api_key_name=api_key_info.name,
+        )
+
+        # trigger background reindex if needed
+        try:
+            if ("file_replaced" in changes or "collection_id" in changes) and doc.collection_id:
+                if background_tasks is not None:
+                    background_tasks.add_task(start_background_document_indexing, str(doc.collection_id))
+        except Exception as ve:
+            logger.warning(f"Failed to schedule background reindex for doc {document_id}: {ve}")
+
+        return doc.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating document: {e}")
+        raise HTTPException(status_code=500, detail=f"Error updating document: {str(e)}")
+
 @document_router.delete("/{document_id}")
 async def delete_document(
     document_id: int,
@@ -515,6 +647,27 @@ class WebpageResponse(BaseModel):
     status_code: Optional[int] = None
     collection_id: str
     
+class DocumentIndexingStatusResponse(BaseModel):
+    """Response model for document indexing status."""
+    collection_id: str
+    documents_total: int
+    indexed: int
+    unindexed: int
+    progress_percent: float
+
+class IndexingBreakdown(BaseModel):
+    """Indexing breakdown for a specific content type."""
+    total: int
+    indexed: int
+    unindexed: int
+
+class CollectionIndexingStatusResponse(BaseModel):
+    """Response model for combined collection indexing status."""
+    collection_id: str
+    documents: IndexingBreakdown
+    webpages: IndexingBreakdown
+    combined: Dict[str, Any]  # Contains total, indexed, unindexed, progress_percent
+
 class WebpageLinkResponse(BaseModel):
     """Response model for webpage link data."""
     source_url: str
@@ -1012,7 +1165,15 @@ async def extract_texts_from_collection(
         logger.error(f"Error extracting texts: {e}")
         raise HTTPException(status_code=500, detail=f"Error extracting texts: {str(e)}")
 
-@webpage_router.delete("/{webpage_id}")
+@webpage_router.delete("/{webpage_id}",
+                      summary="Delete webpage",
+                      description="Delete a crawled webpage and its vector embeddings from ChromaDB",
+                      responses={
+                          200: {"description": "Webpage deleted successfully"},
+                          404: {"description": "Webpage not found"},
+                          403: {"description": "Insufficient permissions"},
+                          500: {"description": "Internal server error"}
+                      })
 async def delete_webpage(
     webpage_id: int,
     request: Request,
@@ -1020,13 +1181,19 @@ async def delete_webpage(
     api_key_info: APIKeyInfo = Depends(require_delete_permission)
 ):
     """
-    Delete a crawled webpage and its embeddings from Chroma.
-    Requires delete permission.
-
-    Args:
-        webpage_id: ID of the webpage to delete
-    Returns:
-        Confirmation message
+    Delete a crawled webpage and its embeddings from ChromaDB.
+    
+    **Parameters:**
+    - **webpage_id**: ID of the webpage to delete
+    
+    **Side Effects:**
+    - Deletes vector embeddings by doc_id from ChromaDB
+    - Removes database record
+    - Creates audit log entry
+    
+    **Permissions:** Requires `delete` permission
+    
+    **Returns:** Confirmation message
     """
     try:
         page = await db.get(Webpage, webpage_id)
@@ -1067,14 +1234,88 @@ async def delete_webpage(
         logger.error(f"Error deleting webpage: {e}")
         raise HTTPException(status_code=500, detail=f"Error deleting webpage: {str(e)}")
 
+@webpage_router.post("/{webpage_id}/recrawl",
+                     summary="Recrawl webpage",
+                     description="Mark a webpage for recrawling and reprocessing by resetting indexing flags",
+                     responses={
+                         200: {"description": "Webpage marked for recrawl successfully"},
+                         404: {"description": "Webpage not found"},
+                         403: {"description": "Insufficient permissions"},
+                         500: {"description": "Internal server error"}
+                     })
+async def recrawl_webpage(
+    webpage_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_write_permission)
+):
+    """
+    Mark a webpage for recrawling and reprocessing.
+    
+    **Parameters:**
+    - **webpage_id**: ID of the webpage to recrawl
+    
+    **Side Effects:**
+    - Sets `is_indexed=false` and `indexed_at=null`
+    - Page will be reprocessed in next indexing cycle
+    - Creates audit log entry
+    
+    **Permissions:** Requires `write` permission
+    
+    **Returns:** Confirmation message with webpage ID
+    """
+    try:
+        page = await db.get(Webpage, webpage_id)
+        if not page:
+            raise HTTPException(status_code=404, detail="Webpage not found")
+
+        page.is_indexed = False
+        page.indexed_at = None
+        await db.commit()
+        await db.refresh(page)
+
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="update",
+            resource_type="webpage",
+            resource_id=str(webpage_id),
+            details={"recrawl": True},
+            request=request,
+            api_key_name=api_key_info.name,
+        )
+
+        return {"message": f"Webpage {webpage_id} marked for recrawl"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error marking webpage for recrawl: {e}")
+        raise HTTPException(status_code=500, detail=f"Error marking webpage for recrawl: {str(e)}")
+
 # Indexing progress endpoints
-@document_router.get("/indexing-status", response_model=Dict[str, Any])
+@document_router.get("/indexing-status", 
+                    response_model=Dict[str, Any],
+                    summary="Get document indexing status",
+                    description="Get indexing progress for uploaded documents in a specific collection",
+                    responses={
+                        200: {"description": "Indexing status retrieved successfully"},
+                        403: {"description": "Insufficient permissions"},
+                        500: {"description": "Internal server error"}
+                    })
 async def get_documents_indexing_status(
-    collection_id: str = Query(..., description="Collection ID"),
+    collection_id: str = Query(..., description="Collection ID to check indexing status for"),
     db: AsyncSession = Depends(get_db),
     api_key_info: APIKeyInfo = Depends(require_read_permission)
 ):
-    """Return indexing status for uploaded documents in a collection."""
+    """
+    Return indexing status for uploaded documents in a collection.
+    
+    **Parameters:**
+    - **collection_id**: Collection ID to check indexing status for
+    
+    **Permissions:** Requires `read` permission
+    
+    **Returns:** Document indexing statistics including total, indexed, unindexed counts and progress percentage
+    """
     try:
         from sqlalchemy import select, func
         total = (await db.execute(select(func.count(Document.id)).where(Document.collection_id == collection_id))).scalar() or 0
@@ -1093,13 +1334,30 @@ async def get_documents_indexing_status(
         raise HTTPException(status_code=500, detail=f"Error getting documents indexing status: {str(e)}")
 
 
-@collection_router.get("/{collection_id}/indexing-status", response_model=Dict[str, Any])
+@collection_router.get("/{collection_id}/indexing-status", 
+                      response_model=Dict[str, Any],
+                      summary="Get collection indexing status", 
+                      description="Get combined indexing progress for documents and webpages in a collection",
+                      responses={
+                          200: {"description": "Combined indexing status retrieved successfully"},
+                          403: {"description": "Insufficient permissions"},
+                          500: {"description": "Internal server error"}
+                      })
 async def get_collection_indexing_status(
-    collection_id: str,
+    collection_id: str = Path(..., description="Collection ID to check indexing status for"),
     db: AsyncSession = Depends(get_db),
     api_key_info: APIKeyInfo = Depends(require_read_permission)
 ):
-    """Return combined indexing status for documents and webpages in a collection."""
+    """
+    Return combined indexing status for documents and webpages in a collection.
+    
+    **Parameters:**
+    - **collection_id**: Collection ID to check indexing status for
+    
+    **Permissions:** Requires `read` permission
+    
+    **Returns:** Combined indexing statistics with separate document/webpage breakdowns and overall progress
+    """
     try:
         from sqlalchemy import select, func
         # Documents
