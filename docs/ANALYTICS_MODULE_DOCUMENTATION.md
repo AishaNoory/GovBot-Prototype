@@ -1,29 +1,127 @@
-Use the documentation below to build an aesthetically pleasing UI that's gonna be super useful for the end user. Use the dashboard specification and the endpoint documentation from where the data will be read.
-
-
-
-# GovStack Analytics Dashboard - Technical Specification
+# GovStack Analytics Module - Technical Documentation
 
 ## Executive Summary
 
-This document outlines the analytics capabilities for the GovStack AI-powered eCitizen Services platform, organized into four key analytics categories: User Analytics, Usage Analytics, Conversation Analytics, and Business Analytics. These metrics provide government agencies with actionable insights to optimize citizen service delivery, measure ROI, and improve user experience.
+The GovStack Analytics Module provides comprehensive insights into AI assistant performance, user behavior, and business impact. The module is implemented as a separate FastAPI microservice that connects to the main GovStack database to analyze chat interactions, user patterns, and service quality metrics.
 
-## Analytics Framework Overview
+## Architecture Overview
 
-The GovStack platform collects rich data across four critical dimensions:
+### Microservice Design
+- **Service**: Standalone FastAPI application (`/analytics/`)
+- **Database**: Connects to main GovStack PostgreSQL database
+- **API Structure**: RESTful endpoints organized by analytics category
+- **Documentation**: Auto-generated Swagger UI at `/analytics/docs`
 
-1. **User Analytics**: Understanding citizen demographics, behavior patterns, and satisfaction
-2. **Usage Analytics**: Monitoring system health, traffic patterns, and operational metrics  
-3. **Conversation Analytics**: Analyzing dialogue flows, intent patterns, and conversation quality
-4. **Business Analytics**: Measuring ROI, automation rates, and business-critical objectives
+### Core Components
+1. **Analytics API** (`analytics/main.py`) - FastAPI application
+2. **Service Layer** (`analytics/services.py`) - Business logic and calculations  
+3. **Database Models** (`analytics/models.py`) - SQLAlchemy models
+4. **Router Modules** (`analytics/routers/`) - Endpoint organization
+5. **Sentiment Analysis** (`analytics/sentiment_analyzer.py`) - ML-powered sentiment analysis
 
-## Core Data Sources & Implementation
+## Analytics Categories
 
-### Data Sources Summary
-- **Primary Tables**: `Chat`, `ChatMessage`, `Document`, `Webpage`
-- **Analytics Engine**: Token tracking system with cost analysis
-- **API Logs**: Request/response patterns and performance metrics
-- **System Monitoring**: Infrastructure and application performance data
+### 1. User Analytics (`/analytics/user/`)
+*Understanding user demographics, behavior patterns, and satisfaction*
+
+#### Endpoints:
+- `GET /analytics/user/demographics` - User growth and demographic metrics
+- `GET /analytics/user/session-frequency` - Session patterns and power user analysis
+- `GET /analytics/user/sentiment` - User satisfaction and sentiment analysis
+
+#### Key Metrics:
+- **Total Users**: Unique users over time period
+- **New vs Returning Users**: User acquisition and retention analysis
+- **Session Frequency**: User engagement patterns and power user identification
+- **User Sentiment**: Satisfaction analysis from message ratings and feedback
+
+### 2. Usage Analytics (`/analytics/usage/`)
+*Monitoring system health, traffic patterns, and operational metrics*
+
+#### Endpoints:
+- `GET /analytics/usage/traffic` - Traffic patterns and request volumes
+- `GET /analytics/usage/session-duration` - Session length analysis
+- `GET /analytics/usage/peak-hours` - Peak usage time identification
+
+#### Key Metrics:
+- **Traffic Volume**: Messages per hour/day/week
+- **Session Duration**: Average and median session lengths
+- **Peak Hours**: High-traffic time periods
+- **System Performance**: Response times and throughput
+
+### 3. Conversation Analytics (`/analytics/conversation/`)
+*Analyzing dialogue flows, intent patterns, and conversation quality*
+
+#### Endpoints:
+- `GET /analytics/conversation/flow` - Conversation pattern analysis
+- `GET /analytics/conversation/intent-analysis` - Intent classification and trends
+- `GET /analytics/conversation/quality-metrics` - Response quality assessment
+
+#### Key Metrics:
+- **Conversation Flow**: Message exchange patterns
+- **Intent Distribution**: Popular topics and service areas
+- **Quality Scores**: Response accuracy and helpfulness ratings
+- **Resolution Rates**: Successful conversation outcomes
+
+### 4. Business Analytics (`/analytics/business/`)
+*Measuring ROI, automation rates, and business impact*
+
+#### Endpoints:
+- `GET /analytics/business/roi` - Return on investment calculations
+- `GET /analytics/business/containment-rate` - Self-service success rates
+- `GET /analytics/business/cost-savings` - Operational cost reduction metrics
+
+#### Key Metrics:
+- **ROI Calculation**: Cost savings vs implementation costs
+- **Containment Rate**: Percentage of queries resolved without human intervention
+- **Cost per Interaction**: Economic efficiency metrics
+- **Service Automation**: Human workload reduction
+
+## Implementation Details
+
+### Database Schema Integration
+
+The analytics module leverages existing GovStack tables:
+
+```sql
+-- Primary tables for analytics
+Chat (session_id, user_id, created_at, updated_at)
+ChatMessage (chat_id, message_type, message_object, timestamp)
+MessageRating (session_id, message_id, rating, feedback_text)
+Document (collection_id, upload_date, created_by)
+Webpage (collection_id, last_crawled, created_by)
+```
+
+### Service Layer Architecture
+
+```python
+class AnalyticsService:
+    """Main service class for analytics calculations."""
+    
+    @staticmethod
+    async def get_user_demographics(db, start_date, end_date):
+        """Calculate user demographics and growth metrics."""
+        
+    @staticmethod
+    async def get_session_frequency_analysis(db, limit):
+        """Analyze user session patterns."""
+        
+    @staticmethod
+    async def calculate_roi_metrics(db, start_date, end_date):
+        """Calculate business ROI metrics."""
+```
+
+### Sentiment Analysis Integration
+
+The module includes ML-powered sentiment analysis:
+
+```python
+from .sentiment_analyzer import sentiment_analyzer
+
+# Analyze feedback sentiment
+sentiment_score = sentiment_analyzer.analyze(feedback_text)
+# Returns: positive, negative, neutral with confidence scores
+```
 
 ---
 
@@ -903,15 +1001,18 @@ print(f"Total users: {demographics['total_users']}")
 ### cURL Examples
 ```bash
 # Get user demographics
-curl -X GET "http://localhost:8005/analytics/user/demographics?start_date=2024-01-01T00:00:00Z&end_date=2024-01-31T23:59:59Z"
+curl -X GET "http://localhost:8005/analytics/user/demographics?start_date=2024-01-01T00:00:00Z&end_date=2024-01-31T23:59:59Z" \
+  -H "X-API-Key: your-api-key-here"
 
 # Get traffic metrics
-curl -X GET "http://localhost:8005/analytics/usage/traffic?start_date=2024-01-01T00:00:00Z"
+curl -X GET "http://localhost:8005/analytics/usage/traffic?start_date=2024-01-01T00:00:00Z" \
+  -H "X-API-Key: your-api-key-here"
 
 # Get ROI metrics
-curl -X GET "http://localhost:8005/analytics/business/roi"
+curl -X GET "http://localhost:8005/analytics/business/roi" \
+  -H "X-API-Key: your-api-key-here"
 
-# Health check
+# Health check (no API key required)
 curl -X GET "http://localhost:8005/analytics/health"
 ```
 
@@ -928,7 +1029,12 @@ const fetchAnalytics = async () => {
   
   const results = await Promise.all(
     endpoints.map(endpoint => 
-      fetch(`http://localhost:8005${endpoint}`).then(r => r.json())
+      fetch(`http://localhost:8005${endpoint}`, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': 'your-api-key-here'
+        }
+      }).then(r => r.json())
     )
   );
   

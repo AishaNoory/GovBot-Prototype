@@ -83,6 +83,34 @@ X-API-Key: your-api-key-here
 }
 ```
 
+### Agency-Scoped Chat
+
+Chat with a specific agency/collection assistant.
+
+```http
+POST /chat/{agency}
+Content-Type: application/json
+X-API-Key: your-api-key-here
+```
+
+**Path Parameters:**
+- `agency`: Agency identifier - can be:
+  - Legacy alias (`kfc`, `kfcb`, `brs`, `odpc`)
+  - Collection name (`Kenya Film Commission`)
+  - Canonical UUID (`3fa85f64-5717-4562-b3fc-2c963f66afa6`)
+
+**Request Body:** Same as `/chat/`
+
+**Response:** Same as `/chat/` but scoped to specific agency's knowledge base
+
+**Side Effects:**
+- Uses only documents/webpages from the specified collection
+- Tools are dynamically generated from available collections
+- Collection changes auto-refresh available tools
+```
+
+**Required Permission:** `write`
+
 **Response:**
 ```json
 {
@@ -177,6 +205,304 @@ X-API-Key: your-api-key-here
 }
 ```
 
+## Chat Events
+
+### Get Chat Events
+
+Retrieve processing events for a chat session.
+
+```http
+GET /chat/events/{session_id}
+X-API-Key: your-api-key-here
+```
+
+**Query Parameters:**
+- `limit`: Maximum events to return (default: 50, max: 500)
+- `event_type`: Filter by specific event type
+- `event_status`: Filter by event status ('started', 'progress', 'completed', 'failed')
+
+**Required Permission:** `read`
+
+**Response:**
+```json
+{
+  "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "events": [
+    {
+      "id": 1,
+      "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "message_id": "msg1",
+      "event_type": "message_received",
+      "event_status": "completed",
+      "event_data": {
+        "message_length": 45
+      },
+      "user_message": "✅ Message received and validated",
+      "timestamp": "2023-10-20T14:30:15.123456",
+      "processing_time_ms": 120
+    }
+  ],
+  "total_count": 1,
+  "has_more": false
+}
+```
+
+### Get Latest Chat Events
+
+Get the most recent events for a session.
+
+```http
+GET /chat/events/{session_id}/latest?count=10
+X-API-Key: your-api-key-here
+```
+
+**Required Permission:** `read`
+
+### WebSocket Event Stream
+
+Real-time event streaming for a chat session.
+
+```
+ws://your-domain/chat/ws/events/{session_id}
+```
+
+**Message Format:**
+```json
+{
+  "type": "event",
+  "event": {
+    "id": 1,
+    "event_type": "agent_thinking",
+    "event_status": "started",
+    "user_message": "🤔 AI is analyzing your question...",
+    "timestamp": "2023-10-20T14:30:15.123456"
+  }
+}
+```
+
+## Message Ratings
+
+### Submit Rating
+
+Rate an assistant message.
+
+```http
+POST /chat/ratings
+Content-Type: application/json
+X-API-Key: your-api-key-here
+```
+
+**Request Body:**
+```json
+{
+  "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "message_id": "msg1",
+  "rating": 5,
+  "feedback_text": "Very helpful response!",
+  "user_id": "user123",
+  "metadata": {
+    "category": "helpful"
+  }
+}
+```
+
+**Required Permission:** `write`
+
+**Response:**
+```json
+{
+  "id": 1,
+  "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "message_id": "msg1",
+  "user_id": "user123",
+  "rating": 5,
+  "feedback_text": "Very helpful response!",
+  "created_at": "2023-10-20T14:30:15.123456",
+  "updated_at": "2023-10-20T14:30:15.123456",
+  "metadata": {
+    "category": "helpful"
+  }
+}
+```
+
+### Get Rating
+
+Retrieve a specific rating.
+
+```http
+GET /chat/ratings/{rating_id}
+X-API-Key: your-api-key-here
+```
+
+**Required Permission:** `read`
+
+### Update Rating
+
+Update an existing rating.
+
+```http
+PUT /chat/ratings/{rating_id}
+Content-Type: application/json
+X-API-Key: your-api-key-here
+```
+
+**Request Body:**
+```json
+{
+  "rating": 4,
+  "feedback_text": "Updated feedback"
+}
+```
+
+**Required Permission:** `write`
+
+### List Ratings
+
+Get ratings with filtering options.
+
+```http
+GET /chat/ratings?session_id=3fa85f64-5717-4562-b3fc-2c963f66afa6&rating=5
+X-API-Key: your-api-key-here
+```
+
+**Query Parameters:**
+- `session_id`: Filter by session
+- `message_id`: Filter by message
+- `user_id`: Filter by user
+- `rating`: Filter by rating value
+- `skip`: Pagination offset
+- `limit`: Maximum results
+
+**Required Permission:** `read`
+
+### Get Rating Statistics
+
+Get aggregated rating statistics.
+
+```http
+GET /chat/ratings/stats
+X-API-Key: your-api-key-here
+```
+
+**Required Permission:** `read`
+
+**Response:**
+```json
+{
+  "total_ratings": 150,
+  "average_rating": 4.2,
+  "rating_distribution": {
+    "1": 5,
+    "2": 10,
+    "3": 25,
+    "4": 60,
+    "5": 50
+  },
+  "recent_ratings_trend": [
+    {
+      "date": "2023-10-20",
+      "average_rating": 4.3,
+      "count": 15
+    }
+  ]
+}
+```
+
+## Audit Logs
+
+### List Audit Logs
+
+Retrieve system audit logs.
+
+```http
+GET /audit-logs
+X-API-Key: your-api-key-here
+```
+
+**Query Parameters:**
+- `skip`: Number of records to skip (default: 0)
+- `limit`: Maximum records to return (1-1000, default: 50)
+- `user_id`: Filter by user ID
+- `action`: Filter by action type
+- `resource_type`: Filter by resource type
+- `resource_id`: Filter by resource ID
+- `hours_ago`: Filter by hours ago (max 1 year)
+
+**Required Permission:** `admin`
+
+**Response:**
+```json
+[
+  {
+    "id": 1,
+    "user_id": "user123",
+    "action": "upload",
+    "resource_type": "document",
+    "resource_id": "doc1",
+    "details": {
+      "filename": "policy.pdf",
+      "size": 1024000
+    },
+    "ip_address": "192.168.1.100",
+    "user_agent": "Mozilla/5.0...",
+    "api_key_name": "master",
+    "timestamp": "2023-10-20T14:30:15.123456"
+  }
+]
+```
+
+### Get Audit Summary
+
+Get audit activity summary.
+
+```http
+GET /audit-logs/summary
+X-API-Key: your-api-key-here
+```
+
+**Required Permission:** `admin`
+
+**Response:**
+```json
+{
+  "total_actions": 1500,
+  "unique_users": 25,
+  "action_counts": {
+    "upload": 500,
+    "delete": 100,
+    "crawl_start": 50
+  },
+  "resource_type_counts": {
+    "document": 600,
+    "webpage": 400,
+    "collection": 50
+  },
+  "recent_activity": [...]
+}
+```
+
+### Get User Audit Logs
+
+Get audit logs for a specific user.
+
+```http
+GET /audit-logs/user/{user_id}
+X-API-Key: your-api-key-here
+```
+
+**Required Permission:** `admin`
+
+### Get Resource Audit Logs
+
+Get audit logs for a specific resource.
+
+```http
+GET /audit-logs/resource/{resource_type}/{resource_id}
+X-API-Key: your-api-key-here
+```
+
+**Required Permission:** `admin`
+
 ## Document Management
 
 ### Upload Document
@@ -206,9 +532,19 @@ X-API-Key: your-api-key-here
   "description": "Government policy document",
   "is_public": false,
   "collection_id": "policies",
+  "is_indexed": false,
+  "indexed_at": null,
+  "created_by": "user123",
+  "updated_by": null,
   "created_at": "2023-10-20T14:30:15.123456",
   "access_url": "https://minio.example.com/presigned-url"
 }
+```
+
+**Side Effects:**
+- File stored in MinIO object storage
+- Sets `is_indexed=false`, triggers background indexing
+- Creates audit log entry
 ```
 
 ### Get Document
@@ -228,6 +564,11 @@ X-API-Key: your-api-key-here
   "content_type": "application/pdf",
   "size": 1024000,
   "description": "Government policy document",
+  "is_indexed": true,
+  "indexed_at": "2023-10-20T15:45:30.123456",
+  "created_by": "user123",
+  "updated_by": "user456",
+  "upload_date": "2023-10-20T14:30:15.123456",
   "access_url": "https://minio.example.com/presigned-url",
   "last_accessed": "2023-10-20T14:30:15.123456"
 }
@@ -246,13 +587,95 @@ X-API-Key: your-api-key-here
 - `skip`: Number of documents to skip (default: 0)
 - `limit`: Maximum documents to return (default: 100)
 
+### Update Document
+
+Update document metadata and optionally replace the file.
+
+```http
+PUT /documents/{document_id}
+Content-Type: multipart/form-data
+X-API-Key: your-api-key-here
+```
+
+**Form Fields:**
+- `file`: Optional new document file to replace existing
+- `description`: Optional description text
+- `is_public`: Optional boolean visibility flag
+- `collection_id`: Optional collection identifier to move document
+
+**Required Permission:** `write`
+
+**Response:**
+```json
+{
+  "id": 1,
+  "filename": "updated-document.pdf",
+  "object_name": "uuid-filename.pdf",
+  "content_type": "application/pdf",
+  "size": 2048000,
+  "description": "Updated government policy document",
+  "is_public": true,
+  "collection_id": "updated-policies",
+  "is_indexed": false,
+  "indexed_at": null,
+  "created_by": "user123",
+  "updated_by": "user456",
+  "upload_date": "2023-10-20T14:30:15.123456",
+  "access_url": "https://minio.example.com/presigned-url"
+}
+```
+
+**Side Effects:**
+- If `file` is provided: uploads new file to MinIO, deletes old file, clears vector embeddings by doc_id, sets `is_indexed=false`, triggers background reindexing
+- If `collection_id` changes: deletes vectors from old collection, sets `is_indexed=false`, triggers reindexing in new collection
+
 ### Delete Document
 
-Remove a document from storage and database.
+Remove a document from storage, database, and vector embeddings.
 
 ```http
 DELETE /documents/{document_id}
 X-API-Key: your-api-key-here
+```
+
+**Required Permission:** `delete`
+
+**Response:**
+```json
+{
+  "message": "Document 123 deleted successfully"
+}
+```
+
+**Side Effects:**
+- Deletes vector embeddings by doc_id from ChromaDB
+- Removes file from MinIO storage
+- Deletes database record
+- Creates audit log entry
+
+### Get Document Indexing Status
+
+Get indexing progress for documents in a collection.
+
+```http
+GET /documents/indexing-status?collection_id=policies
+X-API-Key: your-api-key-here
+```
+
+**Query Parameters:**
+- `collection_id`: Collection ID to check (required)
+
+**Required Permission:** `read`
+
+**Response:**
+```json
+{
+  "collection_id": "policies",
+  "documents_total": 150,
+  "indexed": 142,
+  "unindexed": 8,
+  "progress_percent": 94.7
+}
 ```
 
 ## Web Crawling
@@ -392,6 +815,53 @@ GET /webpages/by-url/?url=https://example.gov/page
 X-API-Key: your-api-key-here
 ```
 
+### Delete Webpage
+
+Remove a webpage from database and vector embeddings.
+
+```http
+DELETE /webpages/{webpage_id}
+X-API-Key: your-api-key-here
+```
+
+**Required Permission:** `delete`
+
+**Response:**
+```json
+{
+  "message": "Webpage 456 deleted successfully"
+}
+```
+
+**Side Effects:**
+- Deletes vector embeddings by doc_id from ChromaDB
+- Removes database record
+- Creates audit log entry
+
+### Recrawl Webpage
+
+Mark a webpage for recrawling and reprocessing.
+
+```http
+POST /webpages/{webpage_id}/recrawl
+Content-Type: application/json
+X-API-Key: your-api-key-here
+```
+
+**Required Permission:** `write`
+
+**Response:**
+```json
+{
+  "message": "Webpage 456 marked for recrawl"
+}
+```
+
+**Side Effects:**
+- Sets `is_indexed=false` and `indexed_at=null`
+- Page will be reprocessed in next indexing cycle
+- Creates audit log entry
+
 ### Extract Text from Collection
 
 Extract text content from webpages in a collection.
@@ -444,6 +914,40 @@ X-API-Key: your-api-key-here
 }
 ```
 
+### Get Collection Indexing Status
+
+Get detailed indexing progress for documents and webpages in a collection.
+
+```http
+GET /collection-stats/{collection_id}/indexing-status
+X-API-Key: your-api-key-here
+```
+
+**Required Permission:** `read`
+
+**Response:**
+```json
+{
+  "collection_id": "gov-website",
+  "documents": {
+    "total": 23,
+    "indexed": 20,
+    "unindexed": 3
+  },
+  "webpages": {
+    "total": 156,
+    "indexed": 142,
+    "unindexed": 14
+  },
+  "combined": {
+    "total": 179,
+    "indexed": 162,
+    "unindexed": 17,
+    "progress_percent": 90.5
+  }
+}
+```
+
 ### Get All Collection Stats
 
 Get statistics for all collections.
@@ -452,6 +956,124 @@ Get statistics for all collections.
 GET /collection-stats/
 X-API-Key: your-api-key-here
 ```
+
+## Collection Management
+
+Collections represent logical groupings of documents and webpages that power retrieval for specific agencies or topics.
+
+### Create Collection
+
+Create a new collection.
+
+```http
+POST /collections/
+Content-Type: application/json
+X-API-Key: your-api-key-here
+```
+
+**Request Body:**
+```json
+{
+  "name": "Ministry of Health",
+  "description": "Health policies and procedures",
+  "type": "mixed"
+}
+```
+
+**Required Permission:** `write`
+
+**Response:**
+```json
+{
+  "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "name": "Ministry of Health",
+  "description": "Health policies and procedures",
+  "type": "mixed",
+  "created_at": "2023-10-20T14:30:15.123456",
+  "updated_at": "2023-10-20T14:30:15.123456",
+  "api_key_name": "master",
+  "document_count": 0,
+  "webpage_count": 0
+}
+```
+
+**Side Effects:**
+- Creates Chroma vector collection
+- Auto-refreshes available chat tools
+- New collection immediately available for document uploads and chat scoping
+
+### List Collections
+
+Get all collections with counts.
+
+```http
+GET /collections/
+X-API-Key: your-api-key-here
+```
+
+**Required Permission:** `read`
+
+**Response:**
+```json
+[
+  {
+    "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "name": "Ministry of Health",
+    "description": "Health policies and procedures",
+    "type": "mixed",
+    "created_at": "2023-10-20T14:30:15.123456",
+    "document_count": 45,
+    "webpage_count": 123
+  }
+]
+```
+
+### Get Collection
+
+Get details for a specific collection.
+
+```http
+GET /collections/{collection_id}
+X-API-Key: your-api-key-here
+```
+
+### Update Collection
+
+Update collection metadata.
+
+```http
+PUT /collections/{collection_id}
+Content-Type: application/json
+X-API-Key: your-api-key-here
+```
+
+**Request Body:**
+```json
+{
+  "name": "Updated Ministry of Health",
+  "description": "Updated description"
+}
+```
+
+**Side Effects:**
+- Auto-refreshes chat tools with new metadata
+- Updates system prompts for agents
+
+### Delete Collection
+
+Remove a collection and optionally its contents.
+
+```http
+DELETE /collections/{collection_id}
+X-API-Key: your-api-key-here
+```
+
+**Required Permission:** `delete`
+
+**Side Effects:**
+- Removes collection from chat tools
+- Orphans documents/webpages (sets collection_id to null)
+- Auto-refreshes available tools
 
 ## Error Responses
 

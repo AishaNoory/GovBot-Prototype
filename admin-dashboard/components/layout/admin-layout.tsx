@@ -11,16 +11,19 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
           </div>
           <nav className="space-y-2 p-4">
             <a href="/" className="flex items-center space-x-2 rounded-lg px-3 py-2 text-sm font-medium hover:bg-accent">
-              <span>Dashboard</span>
+              <span>📊 Dashboard</span>
             </a>
             <a href="/documents" className="flex items-center space-x-2 rounded-lg px-3 py-2 text-sm font-medium hover:bg-accent">
-              <span>Documents</span>
+              <span>📄 Documents</span>
             </a>
             <a href="/websites" className="flex items-center space-x-2 rounded-lg px-3 py-2 text-sm font-medium hover:bg-accent">
-              <span>Websites</span>
+              <span>🌐 Websites</span>
             </a>
             <a href="/collections" className="flex items-center space-x-2 rounded-lg px-3 py-2 text-sm font-medium hover:bg-accent">
-              <span>Collections</span>
+              <span>📁 Collections</span>
+            </a>
+            <a href="/analytics" className="flex items-center space-x-2 rounded-lg px-3 py-2 text-sm font-medium hover:bg-accent">
+              <span>📈 Analytics</span>
             </a>
           </nav>
         </div>

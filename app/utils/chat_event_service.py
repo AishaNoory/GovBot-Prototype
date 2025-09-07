@@ -9,6 +9,7 @@ from sqlalchemy import select, delete, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.chat_event import ChatEvent
+from app.utils.pii import redact_pii
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,26 @@ EVENT_MESSAGES = {
 }
 
 
+def _sanitize_event_payload(obj: Any) -> Any:
+    """Recursively sanitize event payloads by redacting PII in any string fields.
+
+    This is a defense-in-depth measure to avoid accidental PII leakage via
+    event_data. Upstream callers should still pass pre-redacted strings.
+    """
+    try:
+        if isinstance(obj, dict):
+            return {k: _sanitize_event_payload(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_sanitize_event_payload(v) for v in obj]
+        if isinstance(obj, str):
+            return redact_pii(obj)
+        # Primitive (int/float/bool/None) or other types left as-is
+        return obj
+    except Exception:
+        # Best-effort; if anything goes wrong, return original object
+        return obj
+
+
 class ChatEventService:
     """Service for managing chat events and real-time tracking."""
     
@@ -107,12 +128,21 @@ class ChatEventService:
             Created ChatEvent instance or None if failed
         """
         try:
+            # Sanitize event_data defensively to avoid storing raw PII
+            sanitized_event_data = _sanitize_event_payload(event_data) if event_data else None
+
             # Generate user-friendly message
             user_message = custom_message
             if not user_message:
                 user_message = ChatEventService._generate_user_message(
-                    event_type, event_status, event_data
+                    event_type, event_status, sanitized_event_data
                 )
+            # Redact any PII that might appear in a custom or formatted message
+            if user_message:
+                try:
+                    user_message = redact_pii(user_message)
+                except Exception:
+                    pass
             
             # Create event
             event = ChatEvent(
@@ -120,7 +150,7 @@ class ChatEventService:
                 message_id=message_id,
                 event_type=event_type,
                 event_status=event_status,
-                event_data=event_data,
+                event_data=sanitized_event_data,
                 user_message=user_message,
                 processing_time_ms=processing_time_ms
             )

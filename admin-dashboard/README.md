@@ -5,8 +5,20 @@ A comprehensive administrative interface for managing documents, websites, and c
 ## Features
 
 - **Document Management**: Upload, organize, and manage documents with version control
+  - Support for multiple file types (PDF, DOCX, TXT, MD)
+  - Collection-based organization
+  - Real-time document filtering and search
+  - Secure file access with presigned URLs
+- **Collection Management**: Create and organize content into logical collections
+  - Support for documents, webpages, or mixed collections
+  - Real-time statistics and metadata management
+  - Easy content assignment and organization
 - **Website Crawling**: Configure and monitor website crawling jobs
-- **Collection Management**: Organize content into logical collections
+- **Analytics Dashboard**: Comprehensive insights and performance metrics
+  - User analytics (demographics, retention, behavior)
+  - Usage analytics (traffic, system health, performance)
+  - Conversation analytics (flows, intent analysis)
+  - Business analytics (ROI, cost analysis, automation rates)
 - **Real-time Monitoring**: Track crawl progress and system health
 - **Modern UI**: Built with Next.js 15, TypeScript, and Tailwind CSS
 
@@ -93,8 +105,17 @@ The dashboard integrates with the GovStack FastAPI backend through the following
 ### Document Management
 - `POST /documents/` - Upload documents
 - `GET /documents/` - List documents
+- `GET /documents/collection/{collection_id}` - List documents by collection
 - `GET /documents/{id}` - Get document details
 - `DELETE /documents/{id}` - Delete documents
+
+### Collection Management
+- `GET /collection-stats/collections` - List collections
+- `POST /collection-stats/` - Create collection
+- `PUT /collection-stats/{id}` - Update collection
+- `DELETE /collection-stats/{id}` - Delete collection
+- `GET /collection-stats/{id}` - Get collection statistics
+- `GET /collection-stats/` - Get all collection statistics
 
 ### Website Management
 - `POST /crawl/` - Start website crawling
@@ -102,11 +123,13 @@ The dashboard integrates with the GovStack FastAPI backend through the following
 - `GET /webpages/` - List webpages
 - `GET /webpages/collection/{collection_id}` - Get webpages by collection
 
-### Collection Management
-- `GET /collections/` - List collections
-- `POST /collections/` - Create collection
-- `PUT /collections/{id}` - Update collection
-- `DELETE /collections/{id}` - Delete collection
+### Analytics (Port 8005)
+- `GET /analytics/user/demographics` - User demographics and growth
+- `GET /analytics/usage/traffic` - Traffic and usage metrics
+- `GET /analytics/usage/system-health` - Real-time system health
+- `GET /analytics/business/roi` - ROI and cost analysis
+- `GET /analytics/business/containment` - Service automation rates
+- `GET /analytics/conversation/flows` - Conversation flow analysis
 
 ## Configuration
 

@@ -8,26 +8,12 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..schemas import UserDemographics, SessionFrequency, UserSentiment
+from ..schemas import SessionFrequency, UserSentiment, UserTopItem, UserMetrics
 from ..services import AnalyticsService
 
 router = APIRouter()
 
-@router.get("/demographics", response_model=UserDemographics)
-async def get_user_demographics(
-    start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
-    end_date: Optional[datetime] = Query(None, description="End date for analysis"),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get user demographics and growth metrics.
-    
-    Provides insights into:
-    - Total, new, and returning users
-    - Active user counts
-    - User growth rates
-    """
-    return await AnalyticsService.get_user_demographics(db, start_date, end_date)
+## Demographics endpoint removed per scope
 
 @router.get("/session-frequency", response_model=List[SessionFrequency])
 async def get_session_frequency_analysis(
@@ -44,60 +30,65 @@ async def get_session_frequency_analysis(
     """
     return await AnalyticsService.get_session_frequency_analysis(db, limit)
 
-@router.get("/sentiment", response_model=UserSentiment)
+@router.get("/sentiment", response_model=UserSentiment,
+        summary="User sentiment (composite)",
+        description="VADER sentiment blended with explicit ratings when available. Dates accept ISO 8601 UTC like 2025-09-01T00:00:00Z")
 async def get_user_sentiment(
-    start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
-    end_date: Optional[datetime] = Query(None, description="End date for analysis"),
+    start_date: Optional[datetime] = Query(None, description="Start date (ISO 8601, UTC)", example="2025-09-01T00:00:00Z"),
+    end_date: Optional[datetime] = Query(None, description="End date (ISO 8601, UTC)", example="2025-09-07T23:59:59Z"),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get user sentiment and satisfaction metrics.
+    Get comprehensive user sentiment and satisfaction metrics with composite analysis.
     
-    Analyzes:
-    - Conversation completion rates
-    - User satisfaction indicators
-    - Escalation patterns
+    Combines VADER sentiment analysis with explicit user ratings to provide:
+    
+    **Sentiment Analysis (VADER-based):**
+    - Conversation sentiment classification (positive, negative, neutral)
+    - User satisfaction indicators based on message tone
+    - Escalation patterns from negative sentiment detection
+    - Detailed sentiment distribution across all messages
+    
+    **Explicit Rating Integration:**
+    - User-provided star ratings (1-5 scale) analysis
+    - Rating distribution and average scores
+    - Composite satisfaction score (weighted: 70% sentiment + 30% ratings)
+    - Correlation analysis between sentiment predictions and actual ratings
+    
+    **Composite Metrics Benefits:**
+    - Validation of sentiment analysis accuracy
+    - Balanced satisfaction measurement
+    - Confidence indicators for automated analysis
+    - Multiple perspectives on user satisfaction
+    
+    VADER is particularly effective for analyzing informal text like chat messages,
+    handling slang, emojis, and conversational language patterns.
     """
-    # Placeholder implementation - would need sentiment analysis
-    return UserSentiment(
-        positive_conversations=150,
-        negative_conversations=30,
-        neutral_conversations=120,
-        satisfaction_score=4.2,
-        escalation_rate=8.5
-    )
+    return await AnalyticsService.get_user_sentiment(db, start_date, end_date)
 
-@router.get("/retention")
-async def get_user_retention(
-    cohort_size: int = Query(30, description="Cohort size in days"),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get user retention analysis by cohorts.
-    
-    Returns:
-    - Day 1, Day 7, Day 30 retention rates
-    - Cohort analysis
-    - User lifecycle insights
-    """
-    # Placeholder for retention analysis
-    return {
-        "day_1_retention": 65.5,
-        "day_7_retention": 42.3,
-        "day_30_retention": 28.7,
-        "cohort_analysis": []
-    }
+## Retention endpoint removed per scope
 
-@router.get("/geographic")
-async def get_geographic_distribution(
+## Geographic endpoint removed per scope
+
+@router.get("/top", response_model=List[UserTopItem],
+            summary="Top users",
+            description="Users ranked by sessions/messages within the period.")
+async def get_top_users(
+    limit: int = Query(20, ge=1, le=500, description="Max users to return"),
+    start_date: Optional[datetime] = Query(None, description="Start date (ISO 8601, UTC)", example="2025-09-01T00:00:00Z"),
+    end_date: Optional[datetime] = Query(None, description="End date (ISO 8601, UTC)", example="2025-09-07T23:59:59Z"),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Get geographic distribution of users.
-    
-    Note: Requires location data collection to be implemented.
-    """
-    return {
-        "message": "Geographic analysis requires location data collection",
-        "status": "not_implemented"
-    }
+    return [UserTopItem(**r) for r in await AnalyticsService.get_user_top(db, limit, start_date, end_date)]
+
+@router.get("/{user_id}/metrics", response_model=UserMetrics,
+            summary="Per-user metrics",
+            description="Sessions, message counts, avg turns, latency, no-answer, RAG coverage, top collections, last active.")
+async def get_metrics_for_user(
+    user_id: str,
+    start_date: Optional[datetime] = Query(None, description="Start date (ISO 8601, UTC)", example="2025-09-01T00:00:00Z"),
+    end_date: Optional[datetime] = Query(None, description="End date (ISO 8601, UTC)", example="2025-09-07T23:59:59Z"),
+    db: AsyncSession = Depends(get_db)
+):
+    data = await AnalyticsService.get_user_metrics(db, user_id, start_date, end_date)
+    return UserMetrics(**data)

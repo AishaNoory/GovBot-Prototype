@@ -9,7 +9,7 @@ load_dotenv()
 import os
 import logging
 from io import BytesIO
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query, APIRouter
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query, APIRouter, Request, Path
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone, timedelta
 import uuid
@@ -27,11 +27,14 @@ from app.db.models.document import Document, Base as DocumentBase
 from app.db.models.webpage import Webpage, WebpageLink, Base as WebpageBase
 from app.db.models.chat import Chat, ChatMessage, Base as ChatBase
 from app.db.models.chat_event import ChatEvent, Base as ChatEventBase
+from app.db.models.message_rating import MessageRating, Base as MessageRatingBase
+from app.db.models.collection import Collection
+from app.db.models.audit_log import AuditLog, Base as AuditBase
 from app.core.crawlers.web_crawler import crawl_website
 from app.core.crawlers.utils import get_page_as_markdown
 from app.core.rag.indexer import extract_text_batch, get_collection_stats, start_background_indexing, start_background_document_indexing
-from app.core.orchestrator import generate_agent
-from app.utils.security import add_api_key_to_docs, validate_api_key, require_read_permission, require_write_permission, require_delete_permission, APIKeyInfo
+from app.core.rag.vectorstore_admin import delete_embeddings_for_doc
+from app.utils.security import add_api_key_to_docs, validate_api_key, require_read_permission, require_write_permission, require_delete_permission, APIKeyInfo, log_audit_action
 
 import logfire
 
@@ -65,11 +68,14 @@ async def lifespan(app: FastAPI):
     # Startup logic
     logger.info("Starting up GovStack API")
     async with engine.begin() as conn:
-        # Create tables if they don't exist
-        await conn.run_sync(DocumentBase.metadata.create_all)
-        await conn.run_sync(WebpageBase.metadata.create_all)
-        await conn.run_sync(ChatBase.metadata.create_all)
-        await conn.run_sync(ChatEventBase.metadata.create_all)
+        # In production, rely on Alembic migrations instead of create_all.
+        # Enable this only for local dev bootstrapping by setting DB_AUTO_CREATE=true
+        if os.getenv("DB_AUTO_CREATE", "false").lower() == "true":
+            await conn.run_sync(DocumentBase.metadata.create_all)
+            await conn.run_sync(WebpageBase.metadata.create_all)
+            await conn.run_sync(ChatBase.metadata.create_all)
+            await conn.run_sync(ChatEventBase.metadata.create_all)
+            await conn.run_sync(AuditBase.metadata.create_all)
     yield
     # Shutdown logic
     logger.info("Shutting down GovStack API")
@@ -104,6 +110,10 @@ app = FastAPI(
         {
             "name": "Collections",
             "description": "Collection statistics and management",
+        },
+        {
+            "name": "Audit",
+            "description": "Audit trail and activity logging",
         },
     ]
 )
@@ -187,6 +197,7 @@ async def api_info(api_key_info: APIKeyInfo = Depends(validate_api_key)):
 @document_router.post("/", status_code=201)
 async def upload_document(
     background_tasks: BackgroundTasks,
+    request: Request,
     file: UploadFile = File(...),
     description: str = Form(None),
     is_public: bool = Form(False),
@@ -204,13 +215,14 @@ async def upload_document(
         is_public: Whether the document should be publicly accessible
         collection_id: Required identifier for grouping documents
         db: Database session
+        request: Request object for audit logging
         
     Returns:
         Document metadata with access URL
     """
     try:
         # Generate a unique object name
-        file_extension = os.path.splitext(file.filename)[1] if "." in file.filename else ""
+        file_extension = os.path.splitext(file.filename or "")[1] if file.filename and "." in file.filename else ""
         object_name = f"{uuid.uuid4()}{file_extension}"
         
         # Read file content
@@ -231,7 +243,7 @@ async def upload_document(
             metadata=minio_metadata  # Pass metadata here
         )
         
-        # Create document record
+        # Create document record with audit trail
         document = Document(
             filename=file.filename,
             object_name=object_name,
@@ -240,12 +252,30 @@ async def upload_document(
             description=description,
             is_public=is_public,
             metadata={"original_filename": file.filename},
-            collection_id=collection_id  # Pass collection_id to Document constructor
+            collection_id=collection_id,
+            created_by=api_key_info.get_user_id(),
+            api_key_name=api_key_info.name
         )
         
         db.add(document)
         await db.commit()
         await db.refresh(document)
+        
+        # Log audit action
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="upload",
+            resource_type="document",
+            resource_id=str(document.id),
+            details={
+                "filename": file.filename,
+                "size": file_size,
+                "collection_id": collection_id,
+                "is_public": is_public
+            },
+            request=request,
+            api_key_name=api_key_info.name
+        )
         
         # Start background indexing for the uploaded document
         background_tasks.add_task(start_background_document_indexing, collection_id)
@@ -339,9 +369,178 @@ async def list_documents(
         logger.error(f"Error listing documents: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error listing documents: {str(e)}")
 
+@document_router.get("/collection/{collection_id}")
+async def list_documents_by_collection(
+    collection_id: str,
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
+):
+    """
+    List documents in a specific collection with pagination.
+    Requires read permission.
+    
+    Args:
+        collection_id: The collection ID to filter by
+        skip: Number of documents to skip (for pagination)
+        limit: Maximum number of documents to return
+        db: Database session
+        
+    Returns:
+        List of document metadata for the specified collection
+    """
+    try:
+        from sqlalchemy import select
+        
+        # Query documents by collection with pagination
+        query = select(Document).where(Document.collection_id == collection_id).offset(skip).limit(limit)
+        result = await db.execute(query)
+        documents = result.scalars().all()
+        
+        # Convert to dict representation
+        return [doc.to_dict() for doc in documents]
+    
+    except Exception as e:
+        logger.error(f"Error listing documents for collection {collection_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error listing documents for collection: {str(e)}")
+
+@document_router.put("/{document_id}", 
+                    summary="Update document",
+                    description="Update document metadata and optionally replace the file. File replacement triggers vector cleanup and reindexing.",
+                    responses={
+                        200: {"description": "Document updated successfully"},
+                        404: {"description": "Document not found"},
+                        403: {"description": "Insufficient permissions"},
+                        500: {"description": "Internal server error"}
+                    })
+async def update_document(
+    document_id: int,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: Optional[UploadFile] = File(None),
+    description: Optional[str] = Form(None),
+    is_public: Optional[bool] = Form(None),
+    collection_id: Optional[str] = Form(None),
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_write_permission)
+):
+    """
+    Update a document's metadata and optionally replace the file.
+    
+    **Parameters:**
+    - **document_id**: ID of the document to update
+    - **file**: New file to replace existing document (optional)  
+    - **description**: Updated description text (optional)
+    - **is_public**: Updated visibility flag (optional)
+    - **collection_id**: Collection ID to move document to (optional)
+    
+    **Side Effects:**
+    - If `file` provided: uploads new file, deletes old file, clears vector embeddings by doc_id, sets `is_indexed=false`, triggers background reindexing
+    - If `collection_id` changes: deletes vectors from old collection, sets `is_indexed=false`, triggers reindexing in new collection
+    - Creates audit log entry
+    
+    **Permissions:** Requires `write` permission
+    
+    **Returns:** Updated document metadata with indexing status
+    """
+    try:
+        doc = await db.get(Document, document_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        changes: Dict[str, Any] = {}
+
+        # Handle file replacement
+        if file is not None:
+            import uuid, os
+            safe_name = file.filename or ""
+            file_extension = os.path.splitext(safe_name)[1] if "." in safe_name else ""
+            new_object_name = f"{uuid.uuid4()}{file_extension}"
+            # upload new
+            content = await file.read()
+            file_obj = BytesIO(content)
+            minio_client.upload_file(
+                file_obj=file_obj,
+                object_name=new_object_name,
+                content_type=file.content_type or "application/octet-stream",
+            )
+            # remove old object
+            try:
+                if doc.object_name:  # type: ignore[attr-defined]
+                    minio_client.delete_file(str(doc.object_name))
+            except Exception as ve:
+                logger.warning(f"Failed to delete old object for doc {document_id}: {ve}")
+            # update doc fields
+            doc.object_name = new_object_name
+            doc.filename = file.filename or safe_name
+            doc.content_type = file.content_type or "application/octet-stream"
+            doc.size = len(content)
+            doc.is_indexed = False
+            doc.indexed_at = None
+            changes["file_replaced"] = True
+            # delete any existing embeddings for this document in its current collection
+            try:
+                if doc.collection_id is not None:
+                    delete_embeddings_for_doc(collection_id=str(doc.collection_id), doc_id=str(document_id))
+            except Exception as ve:
+                logger.warning(f"Failed to delete embeddings for doc {document_id} on replace: {ve}")
+
+        # Metadata updates
+        if description is not None and description != doc.description:
+            changes["description"] = {"old": doc.description, "new": description}
+            doc.description = description
+        if is_public is not None and is_public != doc.is_public:
+            changes["is_public"] = {"old": doc.is_public, "new": is_public}
+            doc.is_public = bool(is_public)
+        if collection_id is not None and collection_id != doc.collection_id:
+            old_cid = str(doc.collection_id) if doc.collection_id is not None else None
+            changes["collection_id"] = {"old": doc.collection_id, "new": collection_id}
+            doc.collection_id = collection_id
+            # collection change implies reindex and cleanup old vectors
+            doc.is_indexed = False
+            doc.indexed_at = None
+            if old_cid:
+                try:
+                    delete_embeddings_for_doc(collection_id=old_cid, doc_id=str(document_id))
+                except Exception as ve:
+                    logger.warning(f"Failed to delete embeddings for doc {document_id} in old collection {old_cid}: {ve}")
+
+        doc.updated_by = api_key_info.get_user_id()
+
+        await db.commit()
+        await db.refresh(doc)
+
+        # Audit log
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="update",
+            resource_type="document",
+            resource_id=str(document_id),
+            details={"changes": changes},
+            request=request,
+            api_key_name=api_key_info.name,
+        )
+
+        # trigger background reindex if needed
+        try:
+            if ("file_replaced" in changes or "collection_id" in changes) and doc.collection_id:
+                if background_tasks is not None:
+                    background_tasks.add_task(start_background_document_indexing, str(doc.collection_id))
+        except Exception as ve:
+            logger.warning(f"Failed to schedule background reindex for doc {document_id}: {ve}")
+
+        return doc.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating document: {e}")
+        raise HTTPException(status_code=500, detail=f"Error updating document: {str(e)}")
+
 @document_router.delete("/{document_id}")
 async def delete_document(
     document_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     api_key_info: APIKeyInfo = Depends(require_delete_permission)
 ):
@@ -352,6 +551,7 @@ async def delete_document(
     Args:
         document_id: ID of the document to delete
         db: Database session
+        request: Request object for audit logging
         
     Returns:
         Confirmation message
@@ -362,6 +562,20 @@ async def delete_document(
         if not document:
             raise HTTPException(status_code=404, detail="Document not found")
         
+        # Store document info for audit log
+        document_info = {
+            "filename": document.filename,
+            "collection_id": document.collection_id,
+            "size": document.size
+        }
+        
+        # Delete embeddings from Chroma by metadata doc_id in the collection
+        try:
+            if document.collection_id:
+                delete_embeddings_for_doc(collection_id=document.collection_id, doc_id=str(document_id))
+        except Exception as ve:
+            logger.warning(f"Failed to delete vectors for doc {document_id}: {ve}")
+
         # Delete from MinIO
         object_name = document.object_name
         minio_client.delete_file(object_name)
@@ -370,6 +584,17 @@ async def delete_document(
         await db.delete(document)
         await db.commit()
         
+        # Log audit action
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="delete",
+            resource_type="document",
+            resource_id=str(document_id),
+            details=document_info,
+            request=request,
+            api_key_name=api_key_info.name
+        )
+        
         return {"message": f"Document {document_id} deleted successfully"}
     
     except HTTPException:
@@ -377,6 +602,30 @@ async def delete_document(
     except Exception as e:
         logger.error(f"Error deleting document: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error deleting document: {str(e)}")
+
+# Collection Management Models
+class CreateCollectionRequest(BaseModel):
+    """Request model for creating a collection."""
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    type: str = Field(default="mixed", pattern="^(documents|webpages|mixed)$")
+
+class UpdateCollectionRequest(BaseModel):
+    """Request model for updating a collection."""
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    type: Optional[str] = Field(None, pattern="^(documents|webpages|mixed)$")
+
+class CollectionResponse(BaseModel):
+    """Response model for collection data."""
+    id: str
+    name: str
+    description: Optional[str] = None
+    type: str
+    created_at: str
+    updated_at: str
+    document_count: int
+    webpage_count: int
 
 # Web Crawler API Models
 class CrawlWebsiteRequest(BaseModel):
@@ -398,6 +647,27 @@ class WebpageResponse(BaseModel):
     status_code: Optional[int] = None
     collection_id: str
     
+class DocumentIndexingStatusResponse(BaseModel):
+    """Response model for document indexing status."""
+    collection_id: str
+    documents_total: int
+    indexed: int
+    unindexed: int
+    progress_percent: float
+
+class IndexingBreakdown(BaseModel):
+    """Indexing breakdown for a specific content type."""
+    total: int
+    indexed: int
+    unindexed: int
+
+class CollectionIndexingStatusResponse(BaseModel):
+    """Response model for combined collection indexing status."""
+    collection_id: str
+    documents: IndexingBreakdown
+    webpages: IndexingBreakdown
+    combined: Dict[str, Any]  # Contains total, indexed, unindexed, progress_percent
+
 class WebpageLinkResponse(BaseModel):
     """Response model for webpage link data."""
     source_url: str
@@ -434,14 +704,17 @@ class CollectionTextRequest(BaseModel):
     hours_ago: Optional[int] = 24
     output_format: str = Field(default="text", pattern="^(text|json|markdown)$")
 
+# Collections are now persisted in the database via the Collection model
+
 # In-memory storage for background task status
 crawl_tasks = {}
 
 # Web Crawler Endpoints
 @crawler_router.post("/", response_model=CrawlStatusResponse)
 async def start_crawl(
-    request: CrawlWebsiteRequest,
+    request_data: CrawlWebsiteRequest,
     background_tasks: BackgroundTasks,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     api_key_info: APIKeyInfo = Depends(require_write_permission)
 ):
@@ -450,9 +723,10 @@ async def start_crawl(
     Requires write permission.
     
     Args:
-        request: Crawl configuration
+        request_data: Crawl configuration
         background_tasks: Background task manager
         db: Database session
+        request: Request object for audit logging
         
     Returns:
         Initial crawl status including task ID
@@ -463,14 +737,32 @@ async def start_crawl(
         # Initialize task status
         crawl_tasks[task_id] = {
             "status": "starting",
-            "seed_urls": [str(request.url)],
+            "seed_urls": [str(request_data.url)],
             "start_time": datetime.now(timezone.utc).isoformat(),
             "urls_crawled": 0,
             "total_urls_queued": 1,
             "errors": 0,
             "finished": False,
-            "collection_id": request.collection_id,
+            "collection_id": request_data.collection_id,
+            "user_id": api_key_info.get_user_id(),
+            "api_key_name": api_key_info.name,
         }
+        
+        # Log audit action for crawl start
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="crawl_start",
+            resource_type="webpage",
+            resource_id=task_id,
+            details={
+                "url": str(request_data.url),
+                "depth": request_data.depth,
+                "collection_id": request_data.collection_id,
+                "strategy": request_data.strategy
+            },
+            request=request,
+            api_key_name=api_key_info.name
+        )
         
         # Define the background task function
         async def background_crawl():
@@ -479,14 +771,16 @@ async def start_crawl(
                 crawl_tasks[task_id]["status"] = "running"
                 # Start the crawl operation                
                 result = await crawl_website(
-                    seed_url=str(request.url),
-                    depth=request.depth,
-                    concurrent_requests=request.concurrent_requests,
-                    follow_external=request.follow_external,
-                    strategy=request.strategy,
-                    collection_id=request.collection_id,
+                    seed_url=str(request_data.url),
+                    depth=request_data.depth,
+                    concurrent_requests=request_data.concurrent_requests,
+                    follow_external=request_data.follow_external,
+                    strategy=request_data.strategy,
+                    collection_id=request_data.collection_id,
                     session_maker=async_session,
-                    task_status=crawl_tasks[task_id]
+                    task_status=crawl_tasks[task_id],
+                    user_id=api_key_info.get_user_id(),  # Pass user ID for audit trail
+                    api_key_name=api_key_info.name  # Pass API key name for audit trail
                 )
                 # Update task status on completion
                 crawl_tasks[task_id].update({
@@ -496,9 +790,23 @@ async def start_crawl(
                     "finished": True
                 })
                 
+                # Log audit action for crawl completion
+                await log_audit_action(
+                    user_id=api_key_info.get_user_id(),
+                    action="crawl_complete",
+                    resource_type="webpage",
+                    resource_id=task_id,
+                    details={
+                        "urls_crawled": result.get("urls_crawled", 0),
+                        "errors": result.get("errors", 0),
+                        "collection_id": request_data.collection_id
+                    },
+                    api_key_name=api_key_info.name
+                )
+                
                 # Start background indexing for the collection
-                logger.info(f"Crawl completed, starting background indexing for collection '{request.collection_id}'")
-                start_background_indexing(request.collection_id)
+                logger.info(f"Crawl completed, starting background indexing for collection '{request_data.collection_id}'")
+                start_background_indexing(request_data.collection_id)
                 
             except Exception as e:
                 logger.error(f"Error in background crawl task: {str(e)}")
@@ -507,6 +815,19 @@ async def start_crawl(
                     "error_message": str(e),
                     "finished": True
                 })
+                
+                # Log audit action for crawl failure
+                await log_audit_action(
+                    user_id=api_key_info.get_user_id(),
+                    action="crawl_failed",
+                    resource_type="webpage",
+                    resource_id=task_id,
+                    details={
+                        "error": str(e),
+                        "collection_id": request_data.collection_id
+                    },
+                    api_key_name=api_key_info.name
+                )
         
         # Add the crawl task to background tasks
         background_tasks.add_task(background_crawl)
@@ -518,7 +839,7 @@ async def start_crawl(
             seed_urls=crawl_tasks[task_id]["seed_urls"],
             start_time=crawl_tasks[task_id]["start_time"],
             finished=False,
-            collection_id=request.collection_id
+            collection_id=request_data.collection_id
         )
         
     except Exception as e:
@@ -566,6 +887,43 @@ async def get_crawl_status(
         finished=task_status.get("finished", False),
         collection_id=task_status.get("collection_id")
     )
+
+@crawler_router.get("/", response_model=List[CrawlStatusResponse])
+async def list_crawl_jobs(
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
+):
+    """
+    List all crawl jobs with their statuses.
+    Requires read permission.
+
+    Returns:
+        A list of crawl job statuses.
+    """
+    try:
+        # Build response objects for all known tasks
+        responses: List[CrawlStatusResponse] = []
+        for tid, status in crawl_tasks.items():
+            responses.append(CrawlStatusResponse(
+                task_id=tid,
+                status=status.get("status", "unknown"),
+                seed_urls=status.get("seed_urls", []),
+                urls_crawled=status.get("urls_crawled"),
+                total_urls_queued=status.get("total_urls_queued"),
+                errors=status.get("errors"),
+                start_time=status.get("start_time"),
+                finished=status.get("finished", False),
+                collection_id=status.get("collection_id")
+            ))
+
+        # Optionally, sort by start_time descending when available
+        def sort_key(item: CrawlStatusResponse):
+            return item.start_time or ""
+
+        responses.sort(key=sort_key, reverse=True)
+        return responses
+    except Exception as e:
+        logger.error(f"Error listing crawl jobs: {e}")
+        raise HTTPException(status_code=500, detail=f"Error listing crawl jobs: {str(e)}")
 
 @webpage_router.post("/fetch-webpage/", response_model=WebpageFetchResponse)
 async def fetch_webpage(
@@ -807,6 +1165,485 @@ async def extract_texts_from_collection(
         logger.error(f"Error extracting texts: {e}")
         raise HTTPException(status_code=500, detail=f"Error extracting texts: {str(e)}")
 
+@webpage_router.delete("/{webpage_id}",
+                      summary="Delete webpage",
+                      description="Delete a crawled webpage and its vector embeddings from ChromaDB",
+                      responses={
+                          200: {"description": "Webpage deleted successfully"},
+                          404: {"description": "Webpage not found"},
+                          403: {"description": "Insufficient permissions"},
+                          500: {"description": "Internal server error"}
+                      })
+async def delete_webpage(
+    webpage_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_delete_permission)
+):
+    """
+    Delete a crawled webpage and its embeddings from ChromaDB.
+    
+    **Parameters:**
+    - **webpage_id**: ID of the webpage to delete
+    
+    **Side Effects:**
+    - Deletes vector embeddings by doc_id from ChromaDB
+    - Removes database record
+    - Creates audit log entry
+    
+    **Permissions:** Requires `delete` permission
+    
+    **Returns:** Confirmation message
+    """
+    try:
+        page = await db.get(Webpage, webpage_id)
+        if not page:
+            raise HTTPException(status_code=404, detail="Webpage not found")
+
+        info = {"url": page.url, "collection_id": page.collection_id}
+
+        # Delete vectors using doc_id = webpage_id
+        try:
+            coll_id = str(page.collection_id) if page.collection_id is not None else None
+            if coll_id:
+                from app.core.rag.vectorstore_admin import delete_embeddings_for_doc
+                delete_embeddings_for_doc(collection_id=coll_id, doc_id=str(webpage_id))
+        except Exception as ve:
+            logger.warning(f"Failed to delete vectors for webpage {webpage_id}: {ve}")
+
+        # Delete DB row
+        await db.delete(page)
+        await db.commit()
+
+        # Audit log
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="delete",
+            resource_type="webpage",
+            resource_id=str(webpage_id),
+            details=info,
+            request=request,
+            api_key_name=api_key_info.name,
+        )
+
+        return {"message": f"Webpage {webpage_id} deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting webpage: {e}")
+        raise HTTPException(status_code=500, detail=f"Error deleting webpage: {str(e)}")
+
+@webpage_router.post("/{webpage_id}/recrawl",
+                     summary="Recrawl webpage",
+                     description="Mark a webpage for recrawling and reprocessing by resetting indexing flags",
+                     responses={
+                         200: {"description": "Webpage marked for recrawl successfully"},
+                         404: {"description": "Webpage not found"},
+                         403: {"description": "Insufficient permissions"},
+                         500: {"description": "Internal server error"}
+                     })
+async def recrawl_webpage(
+    webpage_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_write_permission)
+):
+    """
+    Mark a webpage for recrawling and reprocessing.
+    
+    **Parameters:**
+    - **webpage_id**: ID of the webpage to recrawl
+    
+    **Side Effects:**
+    - Sets `is_indexed=false` and `indexed_at=null`
+    - Page will be reprocessed in next indexing cycle
+    - Creates audit log entry
+    
+    **Permissions:** Requires `write` permission
+    
+    **Returns:** Confirmation message with webpage ID
+    """
+    try:
+        page = await db.get(Webpage, webpage_id)
+        if not page:
+            raise HTTPException(status_code=404, detail="Webpage not found")
+
+        page.is_indexed = False
+        page.indexed_at = None
+        await db.commit()
+        await db.refresh(page)
+
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="update",
+            resource_type="webpage",
+            resource_id=str(webpage_id),
+            details={"recrawl": True},
+            request=request,
+            api_key_name=api_key_info.name,
+        )
+
+        return {"message": f"Webpage {webpage_id} marked for recrawl"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error marking webpage for recrawl: {e}")
+        raise HTTPException(status_code=500, detail=f"Error marking webpage for recrawl: {str(e)}")
+
+# Indexing progress endpoints
+@document_router.get("/indexing-status", 
+                    response_model=Dict[str, Any],
+                    summary="Get document indexing status",
+                    description="Get indexing progress for uploaded documents in a specific collection",
+                    responses={
+                        200: {"description": "Indexing status retrieved successfully"},
+                        403: {"description": "Insufficient permissions"},
+                        500: {"description": "Internal server error"}
+                    })
+async def get_documents_indexing_status(
+    collection_id: str = Query(..., description="Collection ID to check indexing status for"),
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
+):
+    """
+    Return indexing status for uploaded documents in a collection.
+    
+    **Parameters:**
+    - **collection_id**: Collection ID to check indexing status for
+    
+    **Permissions:** Requires `read` permission
+    
+    **Returns:** Document indexing statistics including total, indexed, unindexed counts and progress percentage
+    """
+    try:
+        from sqlalchemy import select, func
+        total = (await db.execute(select(func.count(Document.id)).where(Document.collection_id == collection_id))).scalar() or 0
+        indexed = (await db.execute(select(func.count(Document.id)).where((Document.collection_id == collection_id) & (Document.is_indexed == True)))).scalar() or 0
+        unindexed = max(total - indexed, 0)
+        progress = (indexed / total * 100.0) if total > 0 else 0.0
+        return {
+            "collection_id": collection_id,
+            "documents_total": total,
+            "indexed": indexed,
+            "unindexed": unindexed,
+            "progress_percent": round(progress, 1),
+        }
+    except Exception as e:
+        logger.error(f"Error getting documents indexing status: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting documents indexing status: {str(e)}")
+
+
+@collection_router.get("/{collection_id}/indexing-status", 
+                      response_model=Dict[str, Any],
+                      summary="Get collection indexing status", 
+                      description="Get combined indexing progress for documents and webpages in a collection",
+                      responses={
+                          200: {"description": "Combined indexing status retrieved successfully"},
+                          403: {"description": "Insufficient permissions"},
+                          500: {"description": "Internal server error"}
+                      })
+async def get_collection_indexing_status(
+    collection_id: str = Path(..., description="Collection ID to check indexing status for"),
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
+):
+    """
+    Return combined indexing status for documents and webpages in a collection.
+    
+    **Parameters:**
+    - **collection_id**: Collection ID to check indexing status for
+    
+    **Permissions:** Requires `read` permission
+    
+    **Returns:** Combined indexing statistics with separate document/webpage breakdowns and overall progress
+    """
+    try:
+        from sqlalchemy import select, func
+        # Documents
+        doc_total = (await db.execute(select(func.count(Document.id)).where(Document.collection_id == collection_id))).scalar() or 0
+        doc_indexed = (await db.execute(select(func.count(Document.id)).where((Document.collection_id == collection_id) & (Document.is_indexed == True)))).scalar() or 0
+        doc_unindexed = max(doc_total - doc_indexed, 0)
+        # Webpages
+        web_total = (await db.execute(select(func.count(Webpage.id)).where(Webpage.collection_id == collection_id))).scalar() or 0
+        web_indexed = (await db.execute(select(func.count(Webpage.id)).where((Webpage.collection_id == collection_id) & (Webpage.is_indexed == True)))).scalar() or 0
+        web_unindexed = max(web_total - web_indexed, 0)
+
+        total = doc_total + web_total
+        indexed = doc_indexed + web_indexed
+        progress = (indexed / total * 100.0) if total > 0 else 0.0
+
+        return {
+            "collection_id": collection_id,
+            "documents": {"total": doc_total, "indexed": doc_indexed, "unindexed": doc_unindexed},
+            "webpages": {"total": web_total, "indexed": web_indexed, "unindexed": web_unindexed},
+            "combined": {"total": total, "indexed": indexed, "unindexed": total - indexed, "progress_percent": round(progress, 1)},
+        }
+    except Exception as e:
+        logger.error(f"Error getting collection indexing status: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting collection indexing status: {str(e)}")
+
+# Collection Management Endpoints
+@collection_router.post("/", response_model=CollectionResponse)
+async def create_collection(
+    request_data: CreateCollectionRequest,
+    request: Request,
+    api_key_info: APIKeyInfo = Depends(require_write_permission),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Create a new collection.
+    Requires write permission.
+    
+    Args:
+        request_data: Collection creation data
+        request: Request object for audit logging
+        
+    Returns:
+        Created collection data
+    """
+    try:
+        import uuid
+        collection_id = str(uuid.uuid4())
+        # Create DB row
+        db_obj = Collection(
+            id=collection_id,
+            name=request_data.name,
+            description=request_data.description,
+            collection_type=request_data.type,
+            api_key_name=api_key_info.name,
+        )
+        db.add(db_obj)
+        await db.commit()
+        await db.refresh(db_obj)
+        
+        # Log audit action
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="create",
+            resource_type="collection",
+            resource_id=collection_id,
+            details={
+                "name": request_data.name,
+                "type": request_data.type,
+                "description": request_data.description
+            },
+            request=request,
+            api_key_name=api_key_info.name
+        )
+        
+        # Trigger RAG cache refresh
+        try:
+            from app.core.rag.tool_loader import refresh_collections
+            refresh_collections()
+        except Exception as _e:
+            logger.warning(f"RAG refresh after create failed: {_e}")
+
+        # Build response
+        return CollectionResponse(
+            id=db_obj.id,
+            name=db_obj.name,
+            description=db_obj.description,
+            type=db_obj.collection_type,
+            created_at=db_obj.created_at.isoformat() if db_obj.created_at else datetime.now(timezone.utc).isoformat(),
+            updated_at=db_obj.updated_at.isoformat() if db_obj.updated_at else datetime.now(timezone.utc).isoformat(),
+            document_count=0,
+            webpage_count=0,
+        )
+    
+    except Exception as e:
+        logger.error(f"Error creating collection: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error creating collection: {str(e)}")
+
+@collection_router.get("/collections", response_model=List[CollectionResponse])
+async def list_collections(
+    api_key_info: APIKeyInfo = Depends(require_read_permission),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    List all collections with counts.
+    Requires read permission.
+    
+    Returns:
+        List of all collections with document and webpage counts
+    """
+    try:
+        from sqlalchemy import select, func
+        # Fetch all collections
+        coll_result = await db.execute(select(Collection))
+        rows = coll_result.scalars().all()
+
+        # Precompute counts per collection_id
+        doc_counts = {}
+        web_counts = {}
+        doc_rows = (await db.execute(select(Document.collection_id, func.count(Document.id)).group_by(Document.collection_id))).all()
+        for cid, cnt in doc_rows:
+            if cid:
+                doc_counts[str(cid)] = cnt or 0
+        web_rows = (await db.execute(select(Webpage.collection_id, func.count(Webpage.id)).group_by(Webpage.collection_id))).all()
+        for cid, cnt in web_rows:
+            if cid:
+                web_counts[str(cid)] = cnt or 0
+
+        # Build responses
+        resp: List[CollectionResponse] = []
+        for c in rows:
+            resp.append(CollectionResponse(
+                id=c.id,
+                name=c.name,
+                description=c.description,
+                type=c.collection_type,
+                created_at=c.created_at.isoformat() if c.created_at else datetime.now(timezone.utc).isoformat(),
+                updated_at=c.updated_at.isoformat() if c.updated_at else datetime.now(timezone.utc).isoformat(),
+                document_count=doc_counts.get(c.id, 0),
+                webpage_count=web_counts.get(c.id, 0),
+            ))
+        return resp
+    
+    except Exception as e:
+        logger.error(f"Error listing collections: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error listing collections: {str(e)}")
+
+@collection_router.put("/{collection_id}", response_model=CollectionResponse) 
+async def update_collection(
+    collection_id: str,
+    request_data: UpdateCollectionRequest,
+    request: Request,
+    api_key_info: APIKeyInfo = Depends(require_write_permission),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update an existing collection.
+    Requires write permission.
+    
+    Args:
+        collection_id: ID of the collection to update
+        request_data: Collection update data
+        request: Request object for audit logging
+        
+    Returns:
+        Updated collection data
+    """
+    try:
+        # Load from DB
+        db_obj = await db.get(Collection, collection_id)
+        if not db_obj:
+            raise HTTPException(status_code=404, detail="Collection not found")
+
+        # Track changes for audit
+        changes = {}
+        if request_data.name is not None and request_data.name != db_obj.name:
+            changes["name"] = {"old": db_obj.name, "new": request_data.name}
+            db_obj.name = request_data.name
+        if request_data.description is not None and request_data.description != db_obj.description:
+            changes["description"] = {"old": db_obj.description, "new": request_data.description}
+            db_obj.description = request_data.description
+        if request_data.type is not None and request_data.type != db_obj.collection_type:
+            changes["type"] = {"old": db_obj.collection_type, "new": request_data.type}
+            db_obj.collection_type = request_data.type
+
+        await db.commit()
+        await db.refresh(db_obj)
+        # Trigger RAG cache refresh
+        try:
+            from app.core.rag.tool_loader import refresh_collections
+            refresh_collections()
+        except Exception as _e:
+            logger.warning(f"RAG refresh after update failed: {_e}")
+        
+        # Log audit action
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="update",
+            resource_type="collection",
+            resource_id=collection_id,
+            details={"changes": changes},
+            request=request,
+            api_key_name=api_key_info.name
+        )
+        
+        # Add counts
+        from sqlalchemy import select, func
+        doc_count = (await db.execute(select(func.count(Document.id)).where(Document.collection_id == collection_id))).scalar() or 0
+        webpage_count = (await db.execute(select(func.count(Webpage.id)).where(Webpage.collection_id == collection_id))).scalar() or 0
+
+        return CollectionResponse(
+            id=db_obj.id,
+            name=db_obj.name,
+            description=db_obj.description,
+            type=db_obj.collection_type,
+            created_at=db_obj.created_at.isoformat() if db_obj.created_at else datetime.now(timezone.utc).isoformat(),
+            updated_at=db_obj.updated_at.isoformat() if db_obj.updated_at else datetime.now(timezone.utc).isoformat(),
+            document_count=doc_count,
+            webpage_count=webpage_count,
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating collection: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error updating collection: {str(e)}")
+
+@collection_router.delete("/{collection_id}")
+async def delete_collection(
+    collection_id: str,
+    request: Request,
+    api_key_info: APIKeyInfo = Depends(require_delete_permission),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Delete a collection.
+    Requires delete permission.
+    
+    Args:
+        collection_id: ID of the collection to delete
+        request: Request object for audit logging
+        
+    Returns:
+        Confirmation message
+    """
+    try:
+        db_obj = await db.get(Collection, collection_id)
+        if not db_obj:
+            raise HTTPException(status_code=404, detail="Collection not found")
+
+        if collection_id == "default":
+            raise HTTPException(status_code=400, detail="Cannot delete default collection")
+
+        collection_info = db_obj.to_dict()
+
+        # Delete DB row
+        await db.delete(db_obj)
+        await db.commit()
+        # Trigger RAG cache refresh
+        try:
+            from app.core.rag.tool_loader import refresh_collections
+            refresh_collections()
+        except Exception as _e:
+            logger.warning(f"RAG refresh after delete failed: {_e}")
+        
+        # Log audit action
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="delete",
+            resource_type="collection",
+            resource_id=collection_id,
+            details={
+                "name": collection_info.get("name"),
+                "type": collection_info.get("type")
+            },
+            request=request,
+            api_key_name=api_key_info.name
+        )
+        
+        return {"message": f"Collection {collection_id} deleted successfully"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting collection: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error deleting collection: {str(e)}")
+
 @collection_router.get("/{collection_id}", response_model=Dict[str, Any])
 async def get_collection_statistics(
     collection_id: str,
@@ -867,6 +1704,12 @@ app.include_router(chat_router, prefix="/chat", tags=["Chat"])
 # Import the chat event endpoints router
 from app.api.endpoints.chat_event_endpoints import router as chat_event_router
 app.include_router(chat_event_router, prefix="/chat", tags=["Chat"])
+# Import the rating endpoints router
+from app.api.endpoints.rating_endpoints import router as rating_router
+app.include_router(rating_router, prefix="/chat", tags=["Chat"])
+# Import the audit endpoints router
+from app.api.endpoints.audit_endpoints import router as audit_router
+app.include_router(audit_router, prefix="/admin", tags=["Audit"])
 app.include_router(document_router)
 app.include_router(crawler_router)
 app.include_router(webpage_router)

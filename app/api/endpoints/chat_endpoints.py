@@ -6,18 +6,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
-import logging
-import uuid
+from uuid import uuid4
 from pydantic_core import to_jsonable_python
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 
 from app.db.database import get_db
 from app.utils.chat_persistence import ChatPersistenceService
 from app.core.orchestrator import generate_agent, Output, Source, Usage, UsageDetails
+from app.core.orchestrator import run_agent as run_llamaindex_agent
+from app.core.compatibility_orchestrator import convert_pydantic_ai_messages_to_llamaindex
 from app.core.event_orchestrator import generate_agent_with_events, EventTrackingContext
 from app.utils.security import validate_api_key, require_read_permission, require_write_permission, require_delete_permission, APIKeyInfo
+from app.utils.fallbacks import get_no_answer_message
+from app.utils.chat_event_service import ChatEventService
+from app.utils.pii import detect_pii, redact_pii
+from app.utils.fallbacks import get_pii_warning
 
 # Configure logging
+import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -28,6 +34,7 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None  # Session ID can be provided by frontend
     user_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    language: Optional[str] = Field(default=None, description="Preferred language code: en, sw (Kiswahili), sheng")
     
     class Config:
         json_schema_extra = {
@@ -97,55 +104,14 @@ class ChatHistoryResponse(BaseModel):
     session_id: str
     messages: List[Dict[str, Any]]
     user_id: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     message_count: int = 0
     num_messages: int  # Total number of messages
     
     class Config:
-        json_schema_extra = {
-            "example": {
-                "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-                "messages": [
-                    {
-                        "id": 1,
-                        "message_id": "msg1",
-                        "message_type": "user",
-                        "message_object": {"query": "What services does the government provide for business registration?"},
-                        "timestamp": "2023-10-20T14:30:15.123456"
-                    },
-                    {
-                        "id": 2,
-                        "message_id": "msg2",
-                        "message_type": "assistant",
-                        "message_object": {
-                            "answer": "To register a business in Kenya, you need to follow these steps...",
-                            "sources": [{"title": "Business Registration Guidelines", "url": "https://example.gov/business-reg"}],
-                            "confidence": 0.92,
-                            "retriever_type": "brs",  # Changed from "hybrid" to a valid collection ID
-                            "usage": {
-                                "requests": 1,
-                                "request_tokens": 891,
-                                "response_tokens": 433,
-                                "total_tokens": 1324,
-                                "details": {
-                                    "accepted_prediction_tokens": 0,
-                                    "audio_tokens": 0,
-                                    "reasoning_tokens": 0,
-                                    "rejected_prediction_tokens": 0,
-                                    "cached_tokens": 0
-                                }
-                            }
-                        },
-                        "timestamp": "2023-10-20T14:30:18.654321"
-                    }
-                ],
-                "user_id": "user123",
-                "created_at": "2023-10-20T14:30:15.123456",
-                "updated_at": "2023-10-20T14:30:18.654321",
-                "message_count": 2,
-                "num_messages": 2
-            }
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
         }
 
 
@@ -156,184 +122,208 @@ async def process_chat(
     api_key_info: APIKeyInfo = Depends(require_write_permission)
 ) -> ChatResponse:
     """
-    Process a chat message, creating a new session if needed or continuing an existing one.
-    Requires write permission.
-    
-    Args:
-        request: The chat request containing the message, session_id (if continuing), and user data
-        db: Database session
-        
-    Returns:
-        Chat response containing the session ID and agent output
+    Process a chat message and return the AI assistant's response using LlamaIndex FunctionAgent.
     """
-    from app.utils.chat_event_service import ChatEventService
-    
-    trace_id = str(uuid.uuid4())  # Generate a unique trace ID for logging
-    session_id = request.session_id
-    message_id = str(uuid.uuid4())  # Generate unique message ID for event tracking
-    
-    # New conversation (no session_id provided) or continuing conversation
-    is_new_session = not session_id
-    
-    if is_new_session:
-        logger.info(f"[{trace_id}] Creating new chat session for user: {request.user_id}")
-        # Create a new chat session
-        session_id = await ChatPersistenceService.create_chat_session(db, request.user_id)
-    else:
-        logger.info(f"[{trace_id}] Using existing session ID: {session_id}")
-        # Check if the chat session exists
-        chat = await ChatPersistenceService.get_chat_by_session_id(db, session_id)
-        if not chat:
-            logger.warning(f"[{trace_id}] Chat session {session_id} not found, creating new session")
-            await ChatPersistenceService.create_chat_session_with_id(db, session_id, request.user_id)
-    
     try:
-        # Event: Message received
+        logger.info(f"Processing chat request for session: {request.session_id}")
+        
+        # Create or retrieve session ID
+        session_id = request.session_id or str(uuid4())
+        
+        # Handle chat persistence
+        if request.session_id:
+            # Check if session exists
+            existing_chat = await ChatPersistenceService.get_chat_by_session_id(db, session_id)
+            if not existing_chat:
+                # Create new session with provided ID
+                await ChatPersistenceService.create_chat_session_with_id(db, session_id, request.user_id)
+        else:
+            # Create completely new session
+            session_id = await ChatPersistenceService.create_chat_session(db, request.user_id)
+        
+        # Load chat history for context
+        chat_history = await ChatPersistenceService.load_history(db, session_id)
+        
+        # Generate agent using the new LlamaIndex implementation
+        agent = generate_agent()
+        
+        # Emit event: message received
         await ChatEventService.create_event(
-            db, session_id, "message_received", "started", message_id
-        )
-        
-        start_time = datetime.now()
-        
-        # Event: Loading history (if not new session)
-        if not is_new_session:
-            await ChatEventService.create_event(
-                db, session_id, "loading_history", "started", message_id
-            )
-        
-        # Create agent and load message history if available
-        # Use event-aware agent with tracking context
-        with EventTrackingContext(db, session_id, message_id):
-            agent = generate_agent_with_events()
-            message_history = await ChatPersistenceService.load_history(db, session_id)
-        
-        if not is_new_session:
-            await ChatEventService.create_event(
-                db, session_id, "loading_history", "completed", message_id
-            )
-        
-        # Event: Message validated and ready for processing
-        await ChatEventService.create_event(
-            db, session_id, "message_received", "completed", message_id
-        )
-        
-        # Save the user message first
-        user_message_obj = {"query": request.message}
-        await ChatPersistenceService.save_message(
-            db, 
-            session_id, 
-            "user", 
-            user_message_obj
-        )
-        
-        # Event: Agent thinking
-        await ChatEventService.create_event(
-            db, session_id, "agent_thinking", "started", message_id
-        )
-        
-        # Process the message with history if available
-        # Run agent within event tracking context
-        with EventTrackingContext(db, session_id, message_id):
-            if message_history:
-                logger.info(f"[{trace_id}] Processing message with history for session: {session_id}")
-                result = await agent.run(request.message, message_history=message_history)
-            else:
-                logger.info(f"[{trace_id}] Processing message without history for session: {session_id}")
-                result = await agent.run(request.message)
-        
-        processing_time = (datetime.now() - start_time).total_seconds()
-        processing_time_ms = int(processing_time * 1000)
-        logger.info(f"[{trace_id}] Processed message in {processing_time:.2f} seconds")
-        
-        # Event: Agent thinking completed
-        await ChatEventService.create_event(
-            db, session_id, "agent_thinking", "completed", message_id, 
-            processing_time_ms=processing_time_ms
-        )
-        
-        # Event: Response generation
-        await ChatEventService.create_event(
-            db, session_id, "response_generation", "started", message_id
-        )
-        
-        # Get usage information
-        usage_info = convert_usage(result.usage())
-        
-        # Create assistant message object with empty follow-up questions
-        assistant_message_obj = {
-            "session_id": session_id,
-            "answer": result.output.answer,
-            "sources": result.output.sources,
-            "confidence": result.output.confidence,
-            "retriever_type": result.output.retriever_type,
-            "trace_id": trace_id,
-            "recommended_follow_up_questions": [],
-            "usage": usage_info.dict() if usage_info else None
-        }
-        
-        # Event: Response generation completed
-        await ChatEventService.create_event(
-            db, session_id, "response_generation", "completed", message_id
-        )
-        
-        # Event: Saving message
-        await ChatEventService.create_event(
-            db, session_id, "saving_message", "started", message_id
-        )
-        
-        # Save the assistant message with history
-        history = result.all_messages()
-        history_as_python = to_jsonable_python(history)
-        success = await ChatPersistenceService.save_message(
-            db, 
-            session_id, 
-            "assistant", 
-            assistant_message_obj,
-            history=history_as_python
-        )
-            
-        if not success:
-            logger.error(f"[{trace_id}] Failed to save chat messages for session: {session_id}")
-            await ChatEventService.create_event(
-                db, session_id, "error", "failed", message_id,
-                event_data={"error_message": "Failed to save chat messages"}
-            )
-            raise HTTPException(status_code=500, detail="Failed to save chat messages")
-        
-        # Event: Message saved successfully
-        await ChatEventService.create_event(
-            db, session_id, "saving_message", "completed", message_id
-        )
-        
-        # Return the response with empty follow-up questions
-        response = ChatResponse(
+            db=db,
             session_id=session_id,
-            answer=result.output.answer,
-            sources=result.output.sources,
-            confidence=result.output.confidence,
-            retriever_type=result.output.retriever_type,
-            trace_id=trace_id,
-            recommended_follow_up_questions=[],
-            usage=usage_info
+            event_type="message_received",
+            event_status="completed",
+            event_data={"language": request.language or request.metadata.get("language") if request.metadata else None}
+        )
+
+        # PII pre-check and redaction for storage; warn user if detected
+        pii_matches = detect_pii(request.message)
+        redacted_user_message = redact_pii(request.message, pii_matches) if pii_matches else request.message
+
+        # Process the message with the agent
+        # The agent.run method returns a CompatibilityResponse with .output attribute
+        response = await agent.run(
+            user_msg=redacted_user_message,
+            message_history=chat_history,
+            session_id=session_id,
+            language=request.language or (request.metadata.get("language") if request.metadata else None),
+            metadata=request.metadata
         )
         
-        return response
-    
-    except HTTPException:
-        # Log error event for HTTP exceptions
-        await ChatEventService.create_event(
-            db, session_id, "error", "failed", message_id,
-            event_data={"error_message": "HTTP error occurred during processing"}
+        logger.info(f"Agent response for session {session_id}: {response.output.answer}")
+
+
+        # Extract the structured output
+        agent_output = response.output
+        
+        # Save the user message and assistant response
+        await ChatPersistenceService.save_message(
+            db=db,
+            session_id=session_id,
+            message_type="user",
+            message_object={"content": redacted_user_message, "metadata": request.metadata or {}}
         )
-        raise
+        
+        await ChatPersistenceService.save_message(
+            db=db,
+            session_id=session_id,
+            message_type="assistant", 
+            message_object={
+                "content": agent_output.answer,
+                "sources": [source.model_dump() for source in agent_output.sources],
+                "confidence": agent_output.confidence,
+                "retriever_type": agent_output.retriever_type,
+                "recommended_follow_up_questions": [q.model_dump() for q in agent_output.recommended_follow_up_questions]
+            },
+            history=response.all_messages()  # Save full conversation history
+        )
+
+        # If no sources and very low confidence, log a knowledge gap event
+        if (not agent_output.sources) and (agent_output.confidence is None or agent_output.confidence < 0.2):
+            await ChatEventService.create_event(
+                db=db,
+                session_id=session_id,
+                event_type="knowledge_gap",
+                event_status="completed",
+                # Ensure we do not leak raw PII in events
+                event_data={"query": redacted_user_message}
+            )
+
+        # If PII was detected, prepend a safety notice to the model's answer (not storing PII)
+        final_answer = agent_output.answer
+        if pii_matches:
+            final_answer = f"{get_pii_warning(request.language or (request.metadata.get('language') if request.metadata else None))}\n\n" + final_answer
+
+        # Create the response
+        chat_response = ChatResponse(
+            session_id=session_id,
+            answer=final_answer,
+            sources=agent_output.sources,
+            confidence=agent_output.confidence,
+            retriever_type=agent_output.retriever_type,
+            usage=agent_output.usage,
+            recommended_follow_up_questions=agent_output.recommended_follow_up_questions,
+            trace_id=None  # Can be enhanced with tracing later
+        )
+        
+        logger.info(f"Successfully processed chat for session: {session_id}")
+        return chat_response
+        
     except Exception as e:
-        # Log error event for general exceptions
-        await ChatEventService.create_event(
-            db, session_id, "error", "failed", message_id,
-            event_data={"error_message": f"Internal server error: {str(e)}"}
+        logger.error(f"Error processing chat: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error processing chat message: {str(e)}"
         )
-        logger.error(f"[{trace_id}] Error processing chat: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.post("/{agency}", response_model=ChatResponse)
+async def process_chat_by_agency(
+    agency: str = Path(..., description="The agency key to scope tools (e.g., kfc, kfcb, brs, odpc)"),
+    request: ChatRequest = Body(...),
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_write_permission)
+) -> ChatResponse:
+    """
+    Process a chat message but scope the available tools to a specific agency.
+    JSON input is identical to the default chat endpoint.
+    """
+    try:
+        logger.info(f"Processing agency-scoped chat request for agency: {agency}, session: {request.session_id}")
+
+        # Create or retrieve session ID
+        session_id = request.session_id or str(uuid4())
+
+        # Handle chat persistence
+        if request.session_id:
+            existing_chat = await ChatPersistenceService.get_chat_by_session_id(db, session_id)
+            if not existing_chat:
+                await ChatPersistenceService.create_chat_session_with_id(db, session_id, request.user_id)
+        else:
+            session_id = await ChatPersistenceService.create_chat_session(db, request.user_id)
+
+        # Load chat history for context (Pydantic-AI format) and convert to LlamaIndex ChatMessage
+        history_pydantic = await ChatPersistenceService.load_history(db, session_id)
+        llama_history = convert_pydantic_ai_messages_to_llamaindex(history_pydantic) if history_pydantic else None
+
+        # PII pre-check and redaction before processing/storage
+        pii_matches = detect_pii(request.message)
+        redacted_user_message = redact_pii(request.message, pii_matches) if pii_matches else request.message
+
+        # Run the LlamaIndex agent directly with agency filter
+        li_response: Output = await run_llamaindex_agent(
+            message=redacted_user_message,
+            chat_history=llama_history,
+            session_id=session_id,
+            agencies=agency,
+            language=request.language or (request.metadata.get("language") if request.metadata else None),
+            metadata=request.metadata,
+            db=db
+        )
+
+        # Persist user and assistant messages
+        await ChatPersistenceService.save_message(
+            db=db,
+            session_id=session_id,
+            message_type="user",
+            message_object={"content": redacted_user_message, "metadata": request.metadata or {}}
+        )
+
+        await ChatPersistenceService.save_message(
+            db=db,
+            session_id=session_id,
+            message_type="assistant",
+            message_object={
+                "content": li_response.answer,
+                "sources": [s.model_dump() for s in li_response.sources],
+                "confidence": li_response.confidence,
+                "retriever_type": li_response.retriever_type,
+                "recommended_follow_up_questions": [q.model_dump() for q in li_response.recommended_follow_up_questions],
+            },
+            # Save a minimal history compatible with our loader
+            history=to_jsonable_python([{"role": "assistant", "content": li_response.answer}])
+        )
+
+        # If PII was detected, prepend a safety notice to the model's answer (not storing PII)
+        final_answer = li_response.answer
+        if pii_matches:
+            final_answer = f"{get_pii_warning(request.language or (request.metadata.get('language') if request.metadata else None))}\n\n" + final_answer
+
+        # Build API response
+        return ChatResponse(
+            session_id=session_id,
+            answer=final_answer,
+            sources=li_response.sources,
+            confidence=li_response.confidence,
+            retriever_type=li_response.retriever_type,
+            usage=li_response.usage,
+            recommended_follow_up_questions=li_response.recommended_follow_up_questions,
+            trace_id=None,
+        )
+
+    except Exception as e:
+        logger.error(f"Error processing agency-scoped chat: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error processing chat message: {str(e)}")
 
 
 @router.get("/{session_id}", response_model=ChatHistoryResponse)
@@ -343,56 +333,32 @@ async def get_chat_history(
     api_key_info: APIKeyInfo = Depends(require_read_permission)
 ) -> ChatHistoryResponse:
     """
-    Retrieve the history of a chat session.
-    Requires read permission.
-    
-    Args:
-        session_id: The ID of the chat session to retrieve
-        db: Database session
-        
-    Returns:
-        Chat history response containing all messages in the session
+    Retrieve chat history for a specific session.
     """
-    trace_id = str(uuid.uuid4())
-    logger.info(f"[{trace_id}] Retrieving chat history for session: {session_id}")
-    
     try:
-        # Get the chat session with properly loaded messages
-        chat_with_messages = await ChatPersistenceService.get_chat_with_messages(db, session_id)
-        if not chat_with_messages:
-            logger.warning(f"[{trace_id}] Chat session {session_id} not found")
-            raise HTTPException(status_code=404, detail=f"Chat session {session_id} not found")
+        logger.info(f"Retrieving chat history for session: {session_id}")
         
-        chat = chat_with_messages["chat"]
-        messages = chat_with_messages["messages"]
+        # Get chat and messages
+        chat_data = await ChatPersistenceService.get_chat_with_messages(db, session_id)
         
-        # Format messages for response
-        formatted_messages = []
-        for msg in messages:
-            formatted_messages.append({
-                "id": msg.id,
-                "message_id": msg.message_id,
-                "message_type": msg.message_type,
-                "message_object": msg.message_object,
-                "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
-            })
+        if not chat_data:
+            raise HTTPException(status_code=404, detail="Chat session not found")
         
-        # Return the chat history
         return ChatHistoryResponse(
             session_id=session_id,
-            messages=formatted_messages,
-            user_id=chat.user_id,
-            created_at=chat.created_at,
-            updated_at=chat.updated_at,
-            message_count=len(formatted_messages),
-            num_messages=len(formatted_messages)
+            messages=chat_data.get("messages", []),
+            user_id=chat_data.get("user_id"),
+            created_at=chat_data.get("created_at") or datetime.now(),
+            updated_at=chat_data.get("updated_at") or datetime.now(),
+            message_count=len(chat_data.get("messages", [])),
+            num_messages=len(chat_data.get("messages", []))
         )
-    
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[{trace_id}] Error retrieving chat history: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        logger.error(f"Error retrieving chat history: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving chat history")
 
 
 @router.delete("/{session_id}")
@@ -402,46 +368,20 @@ async def delete_chat(
     api_key_info: APIKeyInfo = Depends(require_delete_permission)
 ) -> Dict[str, str]:
     """
-    Delete a chat session and all its messages.
-    Requires delete permission.
-    
-    Args:
-        session_id: The ID of the chat session to delete
-        db: Database session
-        
-    Returns:
-        Confirmation message
+    Delete a chat session and all associated messages.
     """
     try:
-        # Delete the chat session
+        logger.info(f"Deleting chat session: {session_id}")
+        
         success = await ChatPersistenceService.delete_chat_session(db, session_id)
+        
         if not success:
-            raise HTTPException(status_code=404, detail=f"Chat session {session_id} not found")
+            raise HTTPException(status_code=404, detail="Chat session not found")
         
         return {"message": f"Chat session {session_id} deleted successfully"}
-    
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error deleting chat: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-# Helper function to convert pydantic-ai usage to our Usage model
-def convert_usage(pydantic_ai_usage) -> Optional[Usage]:
-    """Convert pydantic-ai usage object to our Usage model."""
-    if not pydantic_ai_usage:
-        return None
-    
-    usage_dict = pydantic_ai_usage.__dict__
-    
-    return Usage(
-        requests=usage_dict.get('requests', 0),
-        request_tokens=usage_dict.get('request_tokens', 0),
-        response_tokens=usage_dict.get('response_tokens', 0),
-        total_tokens=usage_dict.get('total_tokens', 0),
-        details=UsageDetails(
-            accepted_prediction_tokens=usage_dict.get('details', {}).get('accepted_prediction_tokens', 0),
-            audio_tokens=usage_dict.get('details', {}).get('audio_tokens', 0),
-            reasoning_tokens=usage_dict.get('details', {}).get('reasoning_tokens', 0),
-            rejected_prediction_tokens=usage_dict.get('details', {}).get('rejected_prediction_tokens', 0),
-            cached_tokens=usage_dict.get('details', {}).get('cached_tokens', 0)
-        )
-    )
+        logger.error(f"Error deleting chat: {e}")
+        raise HTTPException(status_code=500, detail="Error deleting chat session")
