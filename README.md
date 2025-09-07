@@ -2,7 +2,7 @@
 
 GovStack is an intelligent document management and citizen assistance system designed to handle government-related documents with secure storage, retrieval, and processing capabilities. The system is specifically tailored to support eCitizen services in Kenya through AI-powered information retrieval and assistance.
 
-Quick link: See the full documentation index at ./docs/README.md
+Quick link: See the full documentation index: [docs/README.md](docs/README.md)
 
 ## Features
 
@@ -100,9 +100,10 @@ Quick link: See the full documentation index at ./docs/README.md
 
 ## System Architecture
 
-<iframe src="https://app.eraser.io/workspace/JxI0qDfxxU7BF0aRxjqk/preview?elements=7v0nc64pjZXHYe_DV-yt3g&type=embed" width="100%" height="500px" frameborder="0" allowfullscreen></iframe>
+Architecture diagram (external):
+https://app.eraser.io/workspace/JxI0qDfxxU7BF0aRxjqk/preview?elements=7v0nc64pjZXHYe_DV-yt3g&type=embed
 
-This diagram illustrates the core components and data flow of the GovStack system. For a more detailed architectural explanation, see the [Technical Design Document](./docs/technical_design.md).
+This diagram illustrates the core components and data flow of the GovStack system. For a more detailed architectural explanation, see the [Technical Design Document](docs/technical_design.md).
 
 ## Component Access
 
@@ -160,47 +161,47 @@ GovStack provides a full OpenAPI-compliant REST API. You can access the interact
 - Development: http://localhost:5005/docs
 
 See also:
-- Full API reference: ./docs/API_REFERENCE.md
-- Analytics API reference: http://localhost:8005/analytics/docs (when analytics is running)
+- Full API reference: [docs/API_REFERENCE.md](docs/API_REFERENCE.md)
+- Analytics API reference (local runtime): http://localhost:8005/analytics/docs
 
 ## Documentation
 
 Start here for design, security, analytics, and integration details:
 
 - Architecture and security
-   - Technical Design: ./docs/technical_design.md
-   - Security Guidelines: ./docs/SECURITY.md
-   - Privacy & PII (Presidio): ./docs/PII_PRESIDIO_SETUP.md
-   - Risk Mitigation (overview): ./docs/RISK_MITIGATION_OVERVIEW_PUBLIC.md
-   - Risk Mitigation (plan): ./docs/RISK_MITIGATION_PLAN.md
-   - Data Quality Framework: ./docs/dqf.md
-   - Data Provenance: ./docs/DATA_PROVENANCE_ANALYSIS.md
+   - Technical Design: [docs/technical_design.md](docs/technical_design.md)
+   - Security Guidelines: [docs/SECURITY.md](docs/SECURITY.md)
+   - Privacy & PII (Presidio): [docs/PII_PRESIDIO_SETUP.md](docs/PII_PRESIDIO_SETUP.md)
+   - Risk Mitigation (overview): [docs/RISK_MITIGATION_OVERVIEW_PUBLIC.md](docs/RISK_MITIGATION_OVERVIEW_PUBLIC.md)
+   - Risk Mitigation (plan): [docs/RISK_MITIGATION_PLAN.md](docs/RISK_MITIGATION_PLAN.md)
+   - Data Quality Framework: [docs/dqf.md](docs/dqf.md)
+   - Data Provenance: [docs/DATA_PROVENANCE_ANALYSIS.md](docs/DATA_PROVENANCE_ANALYSIS.md)
 
 - Chat, events, and ratings
-   - Chat Event Tracking (backend): ./docs/CHAT_EVENT_TRACKING_SYSTEM.md
-   - Chat Event Tracking (frontend guide): ./docs/CHAT_EVENT_TRACKING_FRONTEND_GUIDE.md
-   - Message Rating System: ./docs/MESSAGE_RATING_SYSTEM.md
-   - Fallback & Escalation: ./docs/FALLBACK_AND_ESCALATION.md
+   - Chat Event Tracking (backend): [docs/CHAT_EVENT_TRACKING_SYSTEM.md](docs/CHAT_EVENT_TRACKING_SYSTEM.md)
+   - Chat Event Tracking (frontend guide): [docs/CHAT_EVENT_TRACKING_FRONTEND_GUIDE.md](docs/CHAT_EVENT_TRACKING_FRONTEND_GUIDE.md)
+   - Message Rating System: [docs/MESSAGE_RATING_SYSTEM.md](docs/MESSAGE_RATING_SYSTEM.md)
+   - Fallback & Escalation: [docs/FALLBACK_AND_ESCALATION.md](docs/FALLBACK_AND_ESCALATION.md)
 
 - LlamaIndex orchestration
-   - Orchestrator: ./docs/LLAMAINDEX_ORCHESTRATOR.md
-   - Usage Tracking Requirements: ./docs/LLAMAINDEX_USAGE_TRACKING_REQUIREMENTS.md
+   - Orchestrator: [docs/LLAMAINDEX_ORCHESTRATOR.md](docs/LLAMAINDEX_ORCHESTRATOR.md)
+   - Usage Tracking Requirements: [docs/LLAMAINDEX_USAGE_TRACKING_REQUIREMENTS.md](docs/LLAMAINDEX_USAGE_TRACKING_REQUIREMENTS.md)
 
 - Analytics service and dashboards
-   - Analytics Service README: ./analytics/README.md
-   - Analytics Module Technical Docs: ./docs/ANALYTICS_MODULE_DOCUMENTATION.md
-   - Analytics Dashboard Specification: ./docs/ANALYTICS_DASHBOARD_SPECIFICATION.md
-   - Composite Sentiment API: ./analytics/COMPOSITE_METRICS_API.md
-   - Sentiment Analysis (VADER): ./analytics/SENTIMENT_ANALYSIS.md
-   - Analytics Tests: ./analytics/README_TESTS.md
+   - Analytics Service README: [analytics/README.md](analytics/README.md)
+   - Analytics Module Technical Docs: [docs/ANALYTICS_MODULE_DOCUMENTATION.md](docs/ANALYTICS_MODULE_DOCUMENTATION.md)
+   - Analytics Dashboard Specification: [docs/ANALYTICS_DASHBOARD_SPECIFICATION.md](docs/ANALYTICS_DASHBOARD_SPECIFICATION.md)
+   - Composite Sentiment API: [analytics/COMPOSITE_METRICS_API.md](analytics/COMPOSITE_METRICS_API.md)
+   - Sentiment Analysis (VADER): [analytics/SENTIMENT_ANALYSIS.md](analytics/SENTIMENT_ANALYSIS.md)
+   - Analytics Tests: [analytics/README_TESTS.md](analytics/README_TESTS.md)
 
 - Metabase and BI
-   - Metabase Setup: ./docs/METABASE_SETUP.md
+   - Metabase Setup: [docs/METABASE_SETUP.md](docs/METABASE_SETUP.md)
 
 - Testing
-   - Test Plan: ./docs/TEST_PLAN.md
-   - Testing Protocols: ./docs/TESTING_PROTOCOLS.md
-   - Test Suite README: ./tests/README.md
+   - Test Plan: [docs/TEST_PLAN.md](docs/TEST_PLAN.md)
+   - Testing Protocols: [docs/TESTING_PROTOCOLS.md](docs/TESTING_PROTOCOLS.md)
+   - Test Suite README: [tests/README.md](tests/README.md)
 
 ### Key API Endpoints
 
@@ -356,114 +357,156 @@ docker compose -f docker-compose.dev.yml up -d api
 
 ```
 govstack/
-├── app/                  # Application source code
-│   ├── api/              # API endpoints and FastAPI application
+├── alembic/                 # Database migrations (Alembic)
+│   ├── env.py
+│   ├── script.py.mako
+│   └── versions/            # Revision scripts
+├── analytics/               # Analytics microservice (FastAPI)
+│   ├── README.md            # Service overview and endpoints
+│   ├── main.py              # FastAPI app entrypoint
+│   ├── database.py
+│   ├── models.py
+│   ├── schemas.py
+│   ├── services.py
+│   ├── sentiment_analyzer.py
+│   ├── routers/
+│   │   ├── business_analytics.py
+│   │   ├── conversation_analytics.py
+│   │   ├── usage_analytics.py
+│   │   └── user_analytics.py
+│   ├── COMPOSITE_METRICS_API.md
+│   ├── SENTIMENT_ANALYSIS.md
+│   ├── requirements.txt
+│   └── tests/
+│       ├── test_composite_metrics.py
+│       ├── test_config.py
+│       └── test_sentiment_demo.py
+├── app/                     # Application source code
+│   ├── api/
 │   │   ├── fast_api_app.py  # Main FastAPI application entry point
-│   │   └── endpoints/    # API endpoint modules organized by feature
-│   │       ├── chat_endpoints.py     # Chat and conversation endpoints
-│   │       └── webpage_endpoints.py  # Web crawling and webpage endpoints
-│   ├── core/             # Core business logic
-│   │   ├── crawlers/     # Web crawling components
-│   │   │   ├── web_crawler.py  # Main web crawler implementation
-│   │   │   └── utils.py        # Crawler utility functions
-│   │   ├── orchestrator.py  # Central orchestration of AI agents
-│   │   └── rag/          # Retrieval Augmented Generation components
-│   │       ├── indexer.py      # Vector indexing for RAG
-│   │       ├── tool_loader.py  # Tool loading utilities
-│   │       └── README.md       # RAG system documentation
-│   ├── db/               # Database models and utilities
-│   │   ├── database.py   # Database configuration and connection
-│   │   └── models/       # SQLAlchemy ORM models
-│   │       ├── chat.py      # Chat sessions and message models
-│   │       ├── document.py  # Document storage models
-│   │       └── webpage.py   # Webpage and crawling models
-│   ├── models/           # Additional model definitions
-│   └── utils/            # Utility functions and shared code
-│       ├── chat_persistence.py  # Chat history persistence
-│       ├── prompts.py           # LLM prompt templates
-│       ├── storage.py           # Storage utilities (MinIO interface)
-│       └── README_chat_persistence.md  # Chat persistence documentation
-├── analytics/            # Analytics microservice (FastAPI)
-│   ├── README.md         # Analytics service overview and endpoints
-│   ├── main.py           # FastAPI app entrypoint for analytics
-│   ├── routers/          # User/Usage/Conversation routers
-│   ├── services.py       # Analytics calculations
-│   ├── schemas.py        # Pydantic response models
-│   ├── models.py         # Local ORM models used by analytics
-│   ├── requirements.txt  # Service dependencies
-│   └── tests/            # Contract tests for analytics endpoints
-├── backups/              # Database backup storage
-│   └── prod/            # Production database backups
-├── data/                 # Persistent data storage (created by containers)
-│   ├── backups/         # Database backup files
-│   ├── backups-dev/     # Development database backups
-│   ├── chroma/          # ChromaDB vector database files
-│   ├── chroma-dev/      # Development ChromaDB files
-│   ├── minio/           # MinIO object storage
-│   ├── minio-dev/       # Development MinIO storage
-│   ├── postgres/        # PostgreSQL database files
-│   └── postgres-dev/    # Development PostgreSQL files
-├── docker/               # Docker configuration files
-│   ├── api.Dockerfile    # Production API container definition
-│   ├── api.dev.Dockerfile # Development API container definition
-│   └── backup.Dockerfile # Database backup container definition
-├── docs/                 # Documentation files
-│   ├── dqf.md           # Data Quality Framework documentation
-│   ├── ANALYTICS_MODULE_DOCUMENTATION.md  # Analytics module deep-dive
-│   ├── ANALYTICS_DASHBOARD_SPECIFICATION.md # Analytics dashboard spec
-│   ├── GovStack_Detailed_Presentation_Slides.md
-│   ├── GovStack_Technical_Architecture_Presentation.md
-│   ├── implementation_status.md  # Implementation status tracking
-│   └── technical_design.md       # Technical design documentation
-├── examples/             # Example code and usage
-│   └── chat_api_examples.md  # Chat API usage examples
-├── scripts/              # Utility scripts for operations and maintenance
-│   ├── __init__.py      # Python package initialization
-│   ├── add_chat_tables.py           # Chat table migration script
-│   ├── add_collection_id_column.py  # Collection ID migration script
-│   ├── add_indexing_columns.py      # Indexing columns migration script
-│   ├── backup_service.sh            # Backup service script
-│   ├── check_indexing_status.py     # Indexing status checker
-│   ├── migrate_chat_tables.py       # Chat table migration
-│   ├── postgres_backup.sh           # PostgreSQL backup script
-│   ├── run_indexing.py              # RAG indexing runner
-│   ├── run_migration.py             # Database migration runner
-│   ├── test_chat_persistence.py     # Chat persistence tests
-│   ├── test_new_chat_persistence.py # New chat persistence tests
-│   └── update_webpage_collections.py # Collection management script
-├── storage/              # Additional storage utilities
-├── tests/                # Comprehensive testing suite
-│   ├── cli.py           # Command-line interface for tests
-│   ├── config.py        # Test configuration
-│   ├── run_tests.sh     # Test execution script
-│   ├── requirements.txt # Test dependencies
-│   ├── Dockerfile       # Test container definition
-│   ├── docker-compose.test.yml      # Test environment Docker config
-│   ├── docker-compose.external.yml  # External testing Docker config
-│   ├── .env.test        # Test environment variables
-│   ├── .env.external    # External testing environment variables
-│   ├── prometheus.yml   # Prometheus monitoring config
-│   ├── prometheus.external.yml # External Prometheus config
-│   ├── integration_tests/  # Integration test suite
-│   ├── load_tests/         # Load and performance tests
-│   ├── scalability_tests/  # Scalability testing
-│   ├── unit_tests/         # Unit test suite
-│   ├── utils/              # Test utilities
-│   ├── results/            # Test result storage
-│   ├── README.md           # Testing documentation
-│   └── EXTERNAL_TESTING.md # External testing guide
-├── .env                  # Environment variables for production
-├── .env.dev              # Development environment variables
-├── .env.example          # Example environment configuration
-├── .gitignore            # Git ignore patterns
-├── requirements.txt      # Python dependencies
-├── docker-compose.yml    # Production Docker configuration
-├── docker-compose.dev.yml  # Development Docker configuration
-├── docker_inspector.sh  # Docker inspection utility
-├── server.htpasswd       # ChromaDB authentication file
-├── shutdown_with_backup.sh  # Graceful shutdown with backup script
-├── README.md             # Project documentation
-└── README_DATABASE_BACKUPS.md  # Database backup documentation
+│   │   └── endpoints/
+│   │       ├── audit_endpoints.py
+│   │       ├── chat_endpoints.py
+│   │       ├── chat_endpoints_clean.py
+│   │       ├── chat_event_endpoints.py
+│   │       ├── rating_endpoints.py
+│   │       └── webpage_endpoints.py
+│   ├── core/                # Core business logic
+│   │   ├── orchestrator.py
+│   │   ├── compatibility_orchestrator.py
+│   │   ├── llamaindex_orchestrator.py
+│   │   ├── event_orchestrator.py
+│   │   ├── crawlers/
+│   │   │   ├── web_crawler.py
+│   │   │   └── utils.py
+│   │   └── rag/             # Retrieval Augmented Generation components
+│   │       ├── indexer.py
+│   │       ├── tool_loader.py
+│   │       ├── vectorstore_admin.py
+│   │       └── README.md
+│   ├── db/
+│   │   ├── database.py
+│   │   └── models/          # SQLAlchemy ORM models
+│   │       ├── audit_log.py
+│   │       ├── chat.py
+│   │       ├── chat_event.py
+│   │       ├── collection.py
+│   │       ├── document.py
+│   │       ├── message_rating.py
+│   │       └── webpage.py
+│   └── utils/               # Utilities and shared code
+│       ├── README_chat_persistence.md
+│       ├── chat_event_service.py
+│       ├── chat_persistence.py
+│       ├── fallbacks.py
+│       ├── pii.py
+│       ├── presidio_pii.py
+│       ├── prompts.py
+│       ├── security.py
+│       └── storage.py
+├── backups/                 # Database backup storage
+│   └── prod/                # Production backups
+├── data/                    # Persistent data storage (created by containers)
+│   ├── backups/
+│   ├── backups-dev/
+│   ├── chroma/
+│   ├── chroma-dev/
+│   ├── metabase/
+│   ├── minio/
+│   ├── minio-dev/
+│   ├── postgres/
+│   └── postgres-dev/
+├── docker/                  # Docker configuration files
+│   ├── api.Dockerfile
+│   ├── api.dev.Dockerfile
+│   └── backup.Dockerfile
+├── docs/                    # Documentation hub
+│   ├── README.md            # Documentation index
+│   ├── API_REFERENCE.md
+│   ├── ANALYTICS_MODULE_DOCUMENTATION.md
+│   ├── ANALYTICS_DASHBOARD_SPECIFICATION.md
+│   ├── CHAT_EVENT_TRACKING_SYSTEM.md
+│   ├── CHAT_EVENT_TRACKING_FRONTEND_GUIDE.md
+│   ├── CRAWLING_GUIDE.md
+│   ├── DEPLOYMENT.md
+│   ├── LLAMAINDEX_ORCHESTRATOR.md
+│   ├── MESSAGE_RATING_SYSTEM.md
+│   ├── METABASE_SETUP.md
+│   ├── OPERATIONS.md
+│   ├── PII_PRESIDIO_SETUP.md
+│   ├── SECURITY.md
+│   ├── STORAGE.md
+│   ├── TEST_PLAN.md
+│   └── technical_design.md
+├── examples/
+│   └── chat_api_examples.md
+├── presentations/
+│   └── GovStack_Technical_Architecture_Presentation.md
+├── scripts/                 # Ops and maintenance scripts
+│   ├── postgres-init/       # Postgres init SQL and helpers
+│   ├── add_audit_trail.py
+│   ├── add_chat_tables.py
+│   ├── add_collection_id_column.py
+│   ├── add_document_indexing_columns.py
+│   ├── add_event_tracking.py
+│   ├── add_indexing_columns.py
+│   ├── add_message_rating_table.py
+│   ├── add_missing_webpage_columns.py
+│   ├── backup_service.sh
+│   ├── chat_retention.py
+│   ├── check_indexing_status.py
+│   ├── run_document_indexing.py
+│   ├── run_indexing.py
+│   ├── run_migration.py
+│   ├── seed_collections.py
+│   ├── update_webpage_collections.py
+│   └── (tests and demo helpers...)
+├── storage/
+├── tests/                   # Comprehensive testing suite
+│   ├── README.md
+│   ├── EXTERNAL_TESTING.md
+│   ├── docker-compose.test.yml
+│   ├── docker-compose.external.yml
+│   ├── run_tests.sh
+│   ├── integration_tests/
+│   ├── load_tests/
+│   ├── scalability_tests/
+│   ├── unit_tests/
+│   └── utils/
+├── .env                     # Production env vars
+├── .env.dev                 # Development env vars
+├── .env.example             # Example env
+├── alembic.ini
+├── docker-compose.yml
+├── docker-compose.dev.yml
+├── docker_inspector.sh
+├── pytest.ini
+├── requirements.txt
+├── server.htpasswd
+├── shutdown_with_backup.sh
+├── test_api.sqlite
+├── test_list_documents.py
+└── README_DATABASE_BACKUPS.md
 ```
 
 ### Key Components
