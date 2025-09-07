@@ -8,26 +8,12 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..schemas import UserDemographics, SessionFrequency, UserSentiment, RetentionData, GeographicDistribution
+from ..schemas import SessionFrequency, UserSentiment
 from ..services import AnalyticsService
 
 router = APIRouter()
 
-@router.get("/demographics", response_model=UserDemographics)
-async def get_user_demographics(
-    start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
-    end_date: Optional[datetime] = Query(None, description="End date for analysis"),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get user demographics and growth metrics.
-    
-    Provides insights into:
-    - Total, new, and returning users
-    - Active user counts
-    - User growth rates
-    """
-    return await AnalyticsService.get_user_demographics(db, start_date, end_date)
+## Demographics endpoint removed per scope
 
 @router.get("/session-frequency", response_model=List[SessionFrequency])
 async def get_session_frequency_analysis(
@@ -78,37 +64,6 @@ async def get_user_sentiment(
     """
     return await AnalyticsService.get_user_sentiment(db, start_date, end_date)
 
-@router.get("/retention", response_model=RetentionData)
-async def get_user_retention(
-    cohort_size: int = Query(30, description="Cohort size in days"),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get user retention analysis by cohorts.
-    
-    Returns:
-    - Day 1, Day 7, Day 30 retention rates
-    - Cohort analysis
-    - User lifecycle insights
-    """
-    # Placeholder for retention analysis
-    return RetentionData(
-        day_1_retention=65.5,
-        day_7_retention=42.3,
-        day_30_retention=28.7,
-        cohort_analysis=[]
-    )
+## Retention endpoint removed per scope
 
-@router.get("/geographic")
-async def get_geographic_distribution(
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get geographic distribution of users.
-    
-    Note: Requires location data collection to be implemented.
-    """
-    return {
-        "message": "Geographic analysis requires location data collection",
-        "status": "not_implemented"
-    }
+## Geographic endpoint removed per scope

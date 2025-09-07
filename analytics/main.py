@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from time import perf_counter
 
-from analytics.routers import user_analytics, usage_analytics, conversation_analytics, business_analytics
+from analytics.routers import user_analytics, usage_analytics, conversation_analytics
 from analytics.database import get_db
 
 # Configure logging
@@ -61,12 +61,6 @@ tags_metadata = [
             "document-retrieval": "Shows common types with example collection_ids in dev.",
         },
     },
-    {
-        "name": "Business Analytics",
-        "description": (
-            "Executive and operational KPIs (ROI, containment, costs, dashboards)."
-        ),
-    },
 ]
 
 # Create FastAPI app
@@ -111,7 +105,7 @@ app.add_middleware(
 app.include_router(user_analytics.router, prefix="/analytics/user", tags=["User Analytics"])
 app.include_router(usage_analytics.router, prefix="/analytics/usage", tags=["Usage Analytics"])
 app.include_router(conversation_analytics.router, prefix="/analytics/conversation", tags=["Conversation Analytics"])
-app.include_router(business_analytics.router, prefix="/analytics/business", tags=["Business Analytics"])
+## Business analytics endpoints removed per scope (no business analytics)
 
 class HealthResponse(BaseModel):
     """Schema for service health response."""
@@ -163,7 +157,7 @@ class EndpointsInfo(BaseModel):
     user: str = Field(..., examples=["/analytics/user"])
     usage: str = Field(..., examples=["/analytics/usage"])
     conversation: str = Field(..., examples=["/analytics/conversation"])
-    business: str = Field(..., examples=["/analytics/business"])
+    # Business removed from scope
 
 
 class RootResponse(BaseModel):
@@ -179,8 +173,7 @@ class RootResponse(BaseModel):
                     "endpoints": {
                         "user": "/analytics/user",
                         "usage": "/analytics/usage",
-                        "conversation": "/analytics/conversation",
-                        "business": "/analytics/business",
+                        "conversation": "/analytics/conversation"
                     },
                 }
             ],
@@ -210,7 +203,6 @@ async def root() -> RootResponse:
             user="/analytics/user",
             usage="/analytics/usage",
             conversation="/analytics/conversation",
-            business="/analytics/business",
         ),
     )
 
