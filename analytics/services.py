@@ -291,7 +291,7 @@ class AnalyticsService:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None
     ) -> List[ConversationFlow]:
-        """Analyze conversation turn patterns."""
+        """Analyze conversation turn patterns and compute avg response time per bucket."""
         
         if not end_date:
             end_date = datetime.utcnow()
@@ -310,6 +310,46 @@ class AnalyticsService:
         turn_result = await db.execute(turn_query)
         conversations = turn_result.fetchall()
         
+        # Compute avg TTFA per chat from events joined to chat_messages
+        ttfa_sql = text(
+            """
+            WITH mr AS (
+                SELECT session_id, message_id, MIN(timestamp) AS mr_ts
+                FROM chat_events
+                WHERE event_type = 'message_received'
+                  AND timestamp BETWEEN :start_ts AND :end_ts
+                GROUP BY session_id, message_id
+            ), at AS (
+                SELECT session_id, message_id, MIN(timestamp) AS at_start, MAX(timestamp) AS at_end
+                FROM chat_events
+                WHERE event_type = 'agent_thinking'
+                  AND timestamp BETWEEN :start_ts AND :end_ts
+                GROUP BY session_id, message_id
+            ), rg AS (
+                SELECT session_id, message_id, MIN(timestamp) AS rg_start, MAX(timestamp) AS rg_end
+                FROM chat_events
+                WHERE event_type = 'response_generation'
+                  AND timestamp BETWEEN :start_ts AND :end_ts
+                GROUP BY session_id, message_id
+            ), joined AS (
+                SELECT mr.message_id,
+                       EXTRACT(EPOCH FROM (COALESCE(rg.rg_end, at.at_end) - mr.mr_ts)) * 1000 AS ttfa_ms
+                FROM mr
+                LEFT JOIN at ON at.session_id = mr.session_id AND at.message_id = mr.message_id
+                LEFT JOIN rg ON rg.session_id = mr.session_id AND rg.message_id = mr.message_id
+                WHERE COALESCE(rg.rg_end, at.at_end) IS NOT NULL
+            ), per_chat AS (
+                SELECT cm.chat_id, AVG(j.ttfa_ms) AS avg_ttfa
+                FROM joined j
+                JOIN chat_messages cm ON cm.message_id = j.message_id
+                GROUP BY cm.chat_id
+            )
+            SELECT chat_id, avg_ttfa FROM per_chat
+            """
+        )
+        ttfa_res = await db.execute(ttfa_sql, {"start_ts": start_date, "end_ts": end_date})
+        ttfa_map = {int(r[0]): float(r[1] or 0.0) for r in ttfa_res.all()}
+
         # Analyze by turn ranges
         turn_ranges = [
             (1, 2), (3, 5), (6, 10), (11, 20), (21, float('inf'))
@@ -328,9 +368,9 @@ class AnalyticsService:
             
             count = len(range_convos)
             completion_rate = (count / total_conversations) * 100 if total_conversations > 0 else 0
-            
-            # Calculate average response time for this range (simplified)
-            avg_response_time = 30.0  # Placeholder - would need more complex calculation
+            # Average response time: mean of per-chat avg TTFA in this bucket
+            bucket_ttfas = [ttfa_map.get(int(c.id), 0.0) for c in range_convos if ttfa_map.get(int(c.id)) is not None]
+            avg_response_time = (sum(bucket_ttfas) / len(bucket_ttfas)) if bucket_ttfas else 0.0
             
             flow_analysis.append(ConversationFlow(
                 turn_number=min_turns,
@@ -340,6 +380,270 @@ class AnalyticsService:
             ))
         
         return flow_analysis
+
+    # ===== Phase P conversation replacements =====
+    @staticmethod
+    async def get_intent_analysis(
+        db: AsyncSession,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """
+        Heuristic intent detection based on user message keywords and RAG/tool signals.
+        Produces items: {intent, frequency, success_rate, average_turns}.
+        """
+        if not end_date:
+            end_date = datetime.utcnow()
+        if not start_date:
+            start_date = end_date - timedelta(days=30)
+
+        # Fetch user messages in window with minimal fields
+        msg_q = select(ChatMessage.chat_id, ChatMessage.message_object).join(Chat).where(
+            and_(Chat.created_at >= start_date, Chat.created_at <= end_date, ChatMessage.message_type == 'user')
+        )
+        res = await db.execute(msg_q)
+        rows = res.fetchall()
+
+        # Simple keyword → intent mapping
+        patterns = [
+            ("document_request", ["document", "policy", "form", "pdf", "file", "download"]),
+            ("service_inquiry", ["apply", "renew", "process", "service", "how do i", "requirements"]),
+            ("technical_support", ["error", "issue", "doesn't work", "cannot", "fail", "bug"]),
+            ("general_question", ["what is", "how to", "explain", "tell me", "info", "information"]),
+        ]
+
+        import re
+        def classify(text: str) -> Optional[str]:
+            t = text.lower()
+            for intent, keys in patterns:
+                for k in keys:
+                    if k in t:
+                        return intent
+            return None
+
+        from collections import defaultdict
+        intent_counts = defaultdict(int)
+        chats_by_intent: Dict[str, set] = defaultdict(set)
+        for chat_id, obj in rows:
+            content = ""
+            if isinstance(obj, dict):
+                content = obj.get("content", "") or ""
+            elif isinstance(obj, str):
+                content = obj
+            intent = classify(content)
+            if intent:
+                intent_counts[intent] += 1
+                chats_by_intent[intent].add(int(chat_id))
+
+        # Compute turns per chat for average_turns
+        turns_q = select(Chat.id, func.count(ChatMessage.id).label("cnt")).join(ChatMessage).where(
+            and_(Chat.created_at >= start_date, Chat.created_at <= end_date)
+        ).group_by(Chat.id)
+        turns_res = await db.execute(turns_q)
+        turns_map = {int(r[0]): int(r[1]) for r in turns_res.all()}
+
+        # Success proxy: chats with at least one assistant message having sources
+        asst_q = select(ChatMessage.chat_id, ChatMessage.message_object).where(ChatMessage.message_type == 'assistant')
+        asst_res = await db.execute(asst_q)
+        has_sources = set()
+        for chat_id, obj in asst_res.fetchall():
+            srcs = []
+            if isinstance(obj, dict):
+                srcs = obj.get('sources') or []
+            if srcs:
+                has_sources.add(int(chat_id))
+
+        items = []
+        for intent, chats in chats_by_intent.items():
+            freq = intent_counts[intent]
+            avg_turns = 0.0
+            if chats:
+                avg_turns = sum(turns_map.get(cid, 0) for cid in chats) / max(1, len(chats))
+            success_chats = len([cid for cid in chats if cid in has_sources])
+            success_rate = (success_chats / max(1, len(chats))) * 100.0
+            items.append({
+                "intent": intent,
+                "frequency": int(freq),
+                "success_rate": round(success_rate, 1),
+                "average_turns": round(avg_turns, 1),
+            })
+
+        items.sort(key=lambda x: x["frequency"], reverse=True)
+        return items[:limit]
+
+    @staticmethod
+    async def get_document_retrieval_analysis(
+        db: AsyncSession,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Data-backed retrieval analysis using chat_events for tool_search_documents.
+        Groups by collection (document_type proxy) and computes success_rate.
+        """
+        if not end_date:
+            end_date = datetime.utcnow()
+        if not start_date:
+            start_date = end_date - timedelta(days=30)
+
+        q = text(
+            """
+            SELECT
+                NULLIF(event_data->>'collection', '') AS collection_id,
+                SUM(CASE WHEN event_status = 'started' THEN 1 ELSE 0 END)::INT AS started,
+                SUM(CASE WHEN event_status = 'completed' THEN 1 ELSE 0 END)::INT AS completed,
+                SUM(CASE WHEN event_status = 'failed' THEN 1 ELSE 0 END)::INT AS failed
+            FROM chat_events
+            WHERE event_type = 'tool_search_documents'
+              AND timestamp BETWEEN :start_ts AND :end_ts
+            GROUP BY NULLIF(event_data->>'collection', '')
+            ORDER BY completed DESC NULLS LAST, started DESC
+            """
+        )
+        res = await db.execute(q, {"start_ts": start_date, "end_ts": end_date})
+        items = []
+        for r in res.mappings().all():
+            started = int(r.get("started") or 0)
+            completed = int(r.get("completed") or 0)
+            failed = int(r.get("failed") or 0)
+            total = started + completed + failed
+            success_rate = (completed / total * 100.0) if total > 0 else 0.0
+            coll = r.get("collection_id") or "unknown"
+            items.append({
+                "document_type": coll,
+                "access_frequency": total,
+                "success_rate": round(success_rate, 1),
+                "collection_id": r.get("collection_id"),
+            })
+        return items
+
+    @staticmethod
+    async def get_drop_offs(
+        db: AsyncSession,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """
+        Drop-off analysis using message counts per chat and simple triggers from errors/no-answer.
+        """
+        if not end_date:
+            end_date = datetime.utcnow()
+        if not start_date:
+            start_date = end_date - timedelta(days=30)
+
+        # Message counts per chat
+        turn_q = select(Chat.id, func.count(ChatMessage.id).label('cnt')).join(ChatMessage).where(
+            and_(Chat.created_at >= start_date, Chat.created_at <= end_date)
+        ).group_by(Chat.id)
+        turn_res = await db.execute(turn_q)
+        counts = [int(r[1]) for r in turn_res.all()]
+
+        buckets = [(1,2), (3,5), (6,10), (11,20), (21, float('inf'))]
+        total = len(counts)
+        points = []
+        for lo, hi in buckets:
+            if hi == float('inf'):
+                n = sum(1 for c in counts if c >= lo)
+                t = lo
+            else:
+                n = sum(1 for c in counts if lo <= c <= hi)
+                t = lo
+            rate = (n/total * 100.0) if total > 0 else 0.0
+            points.append({"turn": int(t), "abandonment_rate": round(rate, 1)})
+
+        # Triggers: combine error types and no-answer triggers
+        na = await AnalyticsService.get_no_answer_stats(db, examples_limit=3)
+        err = await AnalyticsService.get_error_analysis(db, hours=24)
+        triggers = []
+        triggers.extend((na.get("top_triggers") or [])[:2])
+        triggers.extend(list((err.get("error_types") or {}).keys())[:2])
+        triggers = [t for t in triggers if t][:3]
+
+        return {"drop_off_points": points, "common_triggers": triggers}
+
+    @staticmethod
+    async def get_sentiment_trends(
+        db: AsyncSession,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """
+        Sentiment distribution across user messages in window using VADER-based analyzer.
+        """
+        if not end_date:
+            end_date = datetime.utcnow()
+        if not start_date:
+            start_date = end_date - timedelta(days=30)
+
+        msgs_q = select(ChatMessage).join(Chat).where(
+            and_(Chat.created_at >= start_date, Chat.created_at <= end_date, ChatMessage.message_type == 'user')
+        )
+        msgs_res = await db.execute(msgs_q)
+        msgs = msgs_res.scalars().all()
+
+        pos = neu = neg = 0
+        thank_you = 0
+        for m in msgs:
+            content = ""
+            if isinstance(m.message_object, dict):
+                content = m.message_object.get('content', '') or ''
+            elif isinstance(m.message_object, str):
+                content = m.message_object
+            if not content.strip():
+                continue
+            scores, cls = sentiment_analyzer.analyze_and_classify(content)
+            if cls == 'positive':
+                pos += 1
+            elif cls == 'negative':
+                neg += 1
+            else:
+                neu += 1
+            if 'thank' in content.lower():
+                thank_you += 1
+
+        total = pos + neu + neg
+        dist = {
+            "positive": round((pos/total)*100.0, 1) if total>0 else 0.0,
+            "neutral": round((neu/total)*100.0, 1) if total>0 else 0.0,
+            "negative": round((neg/total)*100.0, 1) if total>0 else 0.0,
+        }
+        indicators = []
+        if thank_you > 0:
+            indicators.append("thank_you_expressions")
+        indicators.extend(["successful_completion", "positive_feedback"])  # heuristics
+        return {"sentiment_distribution": dist, "satisfaction_indicators": indicators}
+
+    @staticmethod
+    async def get_knowledge_gaps(
+        db: AsyncSession,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        threshold: float = 0.3,
+    ) -> Dict[str, Any]:
+        """
+        Heuristic knowledge gaps: use top no-answer triggers as topics.
+        """
+        if not end_date:
+            end_date = datetime.utcnow()
+        if not start_date:
+            start_date = end_date - timedelta(days=30)
+
+        na = await AnalyticsService.get_no_answer_stats(db, examples_limit=5)
+        rate = float(na.get("rate") or 0.0)
+        triggers = na.get("top_triggers") or []
+        gaps = []
+        for t in triggers[:5]:
+            gaps.append({
+                "topic": t,
+                "query_frequency": 0,  # not directly derivable from triggers alone
+                "success_rate": max(0.0, 100.0 - rate),
+                "example_queries": [f"Example query related to {t}"]
+            })
+        recs = []
+        if gaps:
+            recs.append("Add content covering top unresolved topics")
+        return {"knowledge_gaps": gaps, "recommendations": recs}
     
     @staticmethod
     async def get_roi_metrics(

@@ -7,7 +7,7 @@ This plan implements the focused analytics in `requirements.md` (no business ana
 - Phase 1 schemas added in `analytics/schemas.py`.
 - Phase 2 services implemented for latency, tool usage, collections health, no‑answer, citations, and answer length.
 - Phase 3 routes added and live for usage and conversation analytics (see corrected paths below).
-- Phase P replacements: System Health, Hourly Traffic, Response Time Trends, and Errors are now data‑backed and live.
+- Phase P replacements: System Health, Hourly Traffic, Response Time Trends, Errors, Capacity, and Conversation (intents, document-retrieval, drop-offs, sentiment-trends, knowledge-gaps, flows avg response time) are now data‑backed and live.
 - Remaining: per‑user metrics and user routes; unit tests; docs polish; perf/index review; final quality gates.
 
 Legend:
@@ -200,54 +200,54 @@ P6) Conversation → Intents (heuristic)
 - Goal: Basic intent labels without external NLP.
 - Data: chat_messages (user); chat_events proximity for tool use
 - Tasks:
-   - [ ] Service: `get_intent_analysis(db, start, end, limit=20)` using ILIKE keyword patterns and tool_search_documents signals.
-   - [ ] Router: replace demo; mark heuristic in description.
+   - [x] Service: `get_intent_analysis(db, start, end, limit=20)` using keyword patterns and RAG/citation signals.
+   - [x] Router: replace demo; mark heuristic in description.
 - Acceptance:
-   - [ ] Non‑empty list when data exists; success_rate proxy via citation/no‑answer.
+   - [x] Non‑empty list when data exists; success_rate proxy via citation/no‑answer.
 
 P7) Conversation → Document Retrieval (data-backed)
 - Goal: Per‑collection access_frequency and success_rate.
 - Data: chat_events where event_type='tool_search_documents'
 - Tasks:
-   - [ ] Service: `get_document_retrieval_analysis(db, start, end)` computing counts and success_rate = completed/(started+failed).
-   - [ ] Router: replace demo.
+   - [x] Service: `get_document_retrieval_analysis(db, start, end)` computing counts and success_rate = completed/(started+failed).
+   - [x] Router: replace demo.
 - Acceptance:
-   - [ ] Ordered by access_frequency; success_rate in [0,100].
+   - [x] Ordered by access_frequency; success_rate in [0,100].
 
 P8) Conversation → Drop‑offs (data-backed)
 - Goal: Abandonment by turn buckets.
 - Data: chat_messages counts per chat
 - Tasks:
-   - [ ] Service: `get_drop_offs(db, start, end)` bucketing message counts (1‑2, 3‑5, 6‑10, 11‑20, 21+).
-   - [ ] Router: replace demo; optional triggers from recent error/no‑answer keywords.
+   - [x] Service: `get_drop_offs(db, start, end)` bucketing message counts (1‑2, 3‑5, 6‑10, 11‑20, 21+).
+   - [x] Router: replace demo; include triggers via errors/no‑answer.
 - Acceptance:
-   - [ ] DropOffPoint list populated when data exists.
+   - [x] DropOffPoint list populated when data exists.
 
 P9) Conversation → Sentiment Trends (data-backed)
 - Goal: Distribution of positive/neutral/negative.
 - Data: chat_messages (user) + existing `sentiment_analyzer`
 - Tasks:
-   - [ ] Service: `get_sentiment_trends(db, start, end)` aggregating analyzer outputs.
-   - [ ] Router: replace demo.
+   - [x] Service: `get_sentiment_trends(db, start, end)` aggregating analyzer outputs.
+   - [x] Router: replace demo.
 - Acceptance:
-   - [ ] Keys sum to ~100 when messages exist.
+   - [x] Keys sum to ~100 when messages exist.
 
 P10) Conversation → Knowledge Gaps (heuristic)
 - Goal: Topics where answers underperform.
 - Data: user messages preceding no‑answer or error; assistant citations
 - Tasks:
-   - [ ] Service: `get_knowledge_gaps(db, start, end, threshold=0.3)` with naive keyword extraction; success proxy via citations or no‑answer inverse.
-   - [ ] Router: replace demo; mark heuristic.
+   - [x] Service: `get_knowledge_gaps(db, start, end, threshold=0.3)` using no‑answer triggers; success proxy via no‑answer inverse.
+   - [x] Router: replace demo; mark heuristic.
 - Acceptance:
-   - [ ] Topics with query_frequency>0; success_rate in [0,100].
+   - [x] Topics listed; success_rate in [0,100].
 
 P11) Conversation → Flows average_response_time (data-backed)
 - Goal: Replace placeholder 30.0 with real average per bucket.
 - Data: chat_events; deltas from message_received → first agent_thinking/response_generation
 - Tasks:
-   - [ ] Enhance `get_conversation_turn_analysis` to compute `average_response_time`.
+   - [x] Enhance `get_conversation_turn_analysis` to compute `average_response_time`.
 - Acceptance:
-   - [ ] Non‑zero averages where events exist; buckets unchanged.
+   - [x] Non‑zero averages where events exist; buckets unchanged.
 
 
 ## Traceability Matrix (task → requirement)

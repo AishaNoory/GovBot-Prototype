@@ -118,8 +118,8 @@ async def get_conversation_flows(
 @router.get(
     "/intents",
     response_model=List[IntentAnalysis],
-    summary="Intent analysis (demo)",
-    description="Most common intents with success rates. Placeholder values until NLP classification is wired.",
+    summary="Intent analysis (heuristic)",
+    description="Heuristic intents inferred from user message keywords and RAG usage; success proxied by presence of citations.",
 )
 async def get_intent_analysis(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
@@ -135,33 +135,14 @@ async def get_intent_analysis(
     - Intent success rates
     - Query classification patterns
     """
-    # Placeholder - would require NLP intent classification
-    return [
-        IntentAnalysis(
-            intent="document_request",
-            frequency=150,
-            success_rate=85.5,
-            average_turns=2.3
-        ),
-        IntentAnalysis(
-            intent="service_inquiry",
-            frequency=120,
-            success_rate=78.2,
-            average_turns=3.1
-        ),
-        IntentAnalysis(
-            intent="technical_support",
-            frequency=85,
-            success_rate=65.8,
-            average_turns=4.2
-        )
-    ]
+    rows = await AnalyticsService.get_intent_analysis(db, start_date, end_date, limit)
+    return [IntentAnalysis(**r) for r in rows]
 
 @router.get(
     "/document-retrieval",
     response_model=List[DocumentRetrieval],
-    summary="Document retrieval patterns (demo)",
-    description="Top document types and success rates. Demo values in dev.",
+    summary="Document retrieval patterns",
+    description="Top collections accessed and retrieval success rates from tool_search_documents events.",
 )
 async def get_document_retrieval_analysis(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
@@ -176,33 +157,14 @@ async def get_document_retrieval_analysis(
     - RAG retrieval success rates
     - Knowledge gap identification
     """
-    # Placeholder - would analyze document access patterns
-    return [
-        DocumentRetrieval(
-            document_type="government_forms",
-            access_frequency=200,
-            success_rate=92.5,
-            collection_id="gov_forms_2024"
-        ),
-        DocumentRetrieval(
-            document_type="policy_documents",
-            access_frequency=180,
-            success_rate=88.7,
-            collection_id="policies_2024"
-        ),
-        DocumentRetrieval(
-            document_type="service_guides",
-            access_frequency=160,
-            success_rate=94.2,
-            collection_id="guides_2024"
-        )
-    ]
+    rows = await AnalyticsService.get_document_retrieval_analysis(db, start_date, end_date)
+    return [DocumentRetrieval(**r) for r in rows]
 
 @router.get(
     "/drop-offs",
     response_model=DropOffData,
-    summary="Drop-off analysis (demo)",
-    description="Common abandonment points by turn and typical triggers.",
+    summary="Drop-off analysis",
+    description="Common abandonment points by turn and typical triggers from recent errors/no-answer heuristics.",
 )
 async def get_conversation_drop_offs(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
@@ -217,25 +179,17 @@ async def get_conversation_drop_offs(
     - Turn numbers with highest drop-off
     - Escalation triggers
     """
+    data = await AnalyticsService.get_drop_offs(db, start_date, end_date)
     return DropOffData(
-        drop_off_points=[
-            DropOffPoint(turn=1, abandonment_rate=15.2),
-            DropOffPoint(turn=2, abandonment_rate=8.7),
-            DropOffPoint(turn=3, abandonment_rate=12.1),
-            DropOffPoint(turn=5, abandonment_rate=18.9),
-        ],
-        common_triggers=[
-            "complex_query",
-            "no_relevant_results",
-            "technical_issues",
-        ],
+        drop_off_points=[DropOffPoint(**p) for p in data.get("drop_off_points", [])],
+        common_triggers=data.get("common_triggers", []),
     )
 
 @router.get(
     "/sentiment-trends",
     response_model=SentimentTrends,
-    summary="Sentiment trends (demo)",
-    description="Distribution of positive/neutral/negative over the period.",
+    summary="Sentiment trends",
+    description="Distribution of positive/neutral/negative over the period from VADER analyzer.",
 )
 async def get_conversation_sentiment_trends(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
@@ -250,24 +204,14 @@ async def get_conversation_sentiment_trends(
     - Satisfaction indicators
     - Emotional journey patterns
     """
-    return SentimentTrends(
-        sentiment_distribution={
-            "positive": 65.5,
-            "neutral": 28.3,
-            "negative": 6.2,
-        },
-        satisfaction_indicators=[
-            "thank_you_expressions",
-            "successful_completion",
-            "positive_feedback",
-        ],
-    )
+    data = await AnalyticsService.get_sentiment_trends(db, start_date, end_date)
+    return SentimentTrends(**data)
 
 @router.get(
     "/knowledge-gaps",
     response_model=KnowledgeGaps,
-    summary="Knowledge gaps (demo)",
-    description="Queries/topics with low success that may need content improvements.",
+    summary="Knowledge gaps (heuristic)",
+    description="Topics inferred from recent no-answer triggers; success proxy derived from no-answer rate.",
 )
 async def get_knowledge_gaps(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
@@ -283,32 +227,8 @@ async def get_knowledge_gaps(
     - Common unanswered questions
     - Content improvement opportunities
     """
-    return KnowledgeGaps(
-        knowledge_gaps=[
-            KnowledgeGap(
-                topic="tax_exemption_process",
-                query_frequency=45,
-                success_rate=62.5,  # percentage
-                example_queries=[
-                    "How to apply for tax exemption?",
-                    "Tax exemption eligibility criteria",
-                ],
-            ),
-            KnowledgeGap(
-                topic="business_permit_renewal",
-                query_frequency=38,
-                success_rate=71.2,  # percentage
-                example_queries=[
-                    "Business permit renewal process",
-                    "Documents needed for permit renewal",
-                ],
-            ),
-        ],
-        recommendations=[
-            "Add more content about tax exemption processes",
-            "Create detailed business permit guides",
-        ],
-    )
+    data = await AnalyticsService.get_knowledge_gaps(db, start_date, end_date, threshold)
+    return KnowledgeGaps(**data)
 
 @router.get(
     "/no-answer",
