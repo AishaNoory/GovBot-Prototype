@@ -277,7 +277,8 @@ async def process_chat_by_agency(
             session_id=session_id,
             agencies=agency,
             language=request.language or (request.metadata.get("language") if request.metadata else None),
-            metadata=request.metadata
+            metadata=request.metadata,
+            db=db
         )
 
         # Persist user and assistant messages

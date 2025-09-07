@@ -6,6 +6,7 @@ import os
 import yaml
 import logging
 from typing import List, Optional, Any, Dict, Union, Callable
+from contextvars import ContextVar
 from dotenv import load_dotenv
 
 from llama_index.core import Settings
@@ -20,6 +21,8 @@ from pydantic import BaseModel, Field
 from app.utils.prompts import SYSTEM_PROMPT
 from app.utils.fallbacks import get_no_answer_message, get_out_of_scope_message
 from app.core.rag.tool_loader import collection_dict, get_index_dict, get_alias_map
+from app.utils.chat_event_service import ChatEventService
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -31,6 +34,27 @@ load_dotenv()
 Settings.embed_model = OpenAIEmbedding(
     model="text-embedding-3-small", embed_batch_size=100
 )
+
+# Context for event tracking (optional; set by run_llamaindex_agent when db/session is provided)
+session_id_context: ContextVar[Optional[str]] = ContextVar('session_id', default=None)
+db_context: ContextVar[Optional[AsyncSession]] = ContextVar('db', default=None)
+
+async def _emit_event(event_type: str, event_status: str, event_data: Optional[Dict] = None) -> None:
+    """Emit a chat event if context is available; noop otherwise."""
+    try:
+        sid = session_id_context.get()
+        db = db_context.get()
+        if sid and db:
+            await ChatEventService.create_event(
+                db=db,
+                session_id=sid,
+                event_type=event_type,
+                event_status=event_status,
+                event_data=event_data or {},
+            )
+    except Exception as e:
+        # Do not fail agent flow due to telemetry
+        logger.debug(f"Event emit skipped/error: {e}")
 
 # Configure LLM based on environment
 if os.getenv("GROQ_MODEL_NAME") is None:
@@ -107,18 +131,20 @@ async def query_kfc_tool(query: str) -> str:
     logger.info(f"Querying Kenya Film Commission with: {query}")
     
     try:
+        await _emit_event("tool_search_documents", "started", {"collection": "kfc"})
         indexes = get_index_dict()
         index = indexes["kfc"]
         retriever = index.as_retriever(similarity_top_k=3)
         nodes = await retriever.aretrieve(query)
-        
+
         if not nodes:
+            await _emit_event("tool_search_documents", "completed", {"collection": "kfc", "count": 0})
             return "No relevant information found in the Kenya Film Commission collection."
-        
+
         # Format response with sources
         response_parts = []
         sources = []
-        
+
         for i, node in enumerate(nodes[:3]):  # Limit to top 3 results
             response_parts.append(f"Source {i+1}: {node.text[:500]}...")
             sources.append({
@@ -126,12 +152,14 @@ async def query_kfc_tool(query: str) -> str:
                 "content": node.text,
                 "score": node.score if hasattr(node, 'score') else 0.0
             })
-        
+
         formatted_response = "\n\n".join(response_parts)
+        await _emit_event("tool_search_documents", "completed", {"collection": "kfc", "count": len(nodes)})
         return f"Kenya Film Commission Information:\n\n{formatted_response}"
-        
+
     except Exception as e:
         logger.error(f"Error querying KFC: {e}")
+        await _emit_event("tool_search_documents", "failed", {"collection": "kfc", "error": str(e)})
         return f"Error retrieving information from Kenya Film Commission: {str(e)}"
 
 
@@ -148,23 +176,27 @@ async def query_kfcb_tool(query: str) -> str:
     logger.info(f"Querying Kenya Film Classification Board with: {query}")
     
     try:
+        await _emit_event("tool_search_documents", "started", {"collection": "kfcb"})
         indexes = get_index_dict()
         index = indexes["kfcb"]
         retriever = index.as_retriever(similarity_top_k=3)
         nodes = await retriever.aretrieve(query)
-        
+
         if not nodes:
+            await _emit_event("tool_search_documents", "completed", {"collection": "kfcb", "count": 0})
             return "No relevant information found in the Kenya Film Classification Board collection."
-        
+
         response_parts = []
         for i, node in enumerate(nodes[:3]):
             response_parts.append(f"Source {i+1}: {node.text[:500]}...")
-        
+
         formatted_response = "\n\n".join(response_parts)
+        await _emit_event("tool_search_documents", "completed", {"collection": "kfcb", "count": len(nodes)})
         return f"Kenya Film Classification Board Information:\n\n{formatted_response}"
-        
+
     except Exception as e:
         logger.error(f"Error querying KFCB: {e}")
+        await _emit_event("tool_search_documents", "failed", {"collection": "kfcb", "error": str(e)})
         return f"Error retrieving information from Kenya Film Classification Board: {str(e)}"
 
 
@@ -181,23 +213,27 @@ async def query_brs_tool(query: str) -> str:
     logger.info(f"Querying Business Registration Service with: {query}")
     
     try:
+        await _emit_event("tool_search_documents", "started", {"collection": "brs"})
         indexes = get_index_dict()
         index = indexes["brs"]
         retriever = index.as_retriever(similarity_top_k=3)
         nodes = await retriever.aretrieve(query)
-        
+
         if not nodes:
+            await _emit_event("tool_search_documents", "completed", {"collection": "brs", "count": 0})
             return "No relevant information found in the Business Registration Service collection."
-        
+
         response_parts = []
         for i, node in enumerate(nodes[:3]):
             response_parts.append(f"Source {i+1}: {node.text[:500]}...")
-        
+
         formatted_response = "\n\n".join(response_parts)
+        await _emit_event("tool_search_documents", "completed", {"collection": "brs", "count": len(nodes)})
         return f"Business Registration Service Information:\n\n{formatted_response}"
-        
+
     except Exception as e:
         logger.error(f"Error querying BRS: {e}")
+        await _emit_event("tool_search_documents", "failed", {"collection": "brs", "error": str(e)})
         return f"Error retrieving information from Business Registration Service: {str(e)}"
 
 
@@ -214,23 +250,27 @@ async def query_odpc_tool(query: str) -> str:
     logger.info(f"Querying Office of the Data Protection Commissioner with: {query}")
     
     try:
+        await _emit_event("tool_search_documents", "started", {"collection": "odpc"})
         indexes = get_index_dict()
         index = indexes["odpc"]
         retriever = index.as_retriever(similarity_top_k=3)
         nodes = await retriever.aretrieve(query)
-        
+
         if not nodes:
+            await _emit_event("tool_search_documents", "completed", {"collection": "odpc", "count": 0})
             return "No relevant information found in the Office of the Data Protection Commissioner collection."
-        
+
         response_parts = []
         for i, node in enumerate(nodes[:3]):
             response_parts.append(f"Source {i+1}: {node.text[:500]}...")
-        
+
         formatted_response = "\n\n".join(response_parts)
+        await _emit_event("tool_search_documents", "completed", {"collection": "odpc", "count": len(nodes)})
         return f"Office of the Data Protection Commissioner Information:\n\n{formatted_response}"
-        
+
     except Exception as e:
         logger.error(f"Error querying ODPC: {e}")
+        await _emit_event("tool_search_documents", "failed", {"collection": "odpc", "error": str(e)})
         return f"Error retrieving information from Office of the Data Protection Commissioner: {str(e)}"
 
 
@@ -269,19 +309,24 @@ def create_llamaindex_tools(agencies: Optional[Union[str, List[str]]] = None) ->
     def _make_query_fn(key: str, display_name: str) -> Callable[[str], Any]:
         async def _fn(query: str) -> str:
             try:
+                # Emit started event for dynamic tools
+                await _emit_event("tool_search_documents", "started", {"collection": key})
                 indexes = get_index_dict()
                 index = indexes[key]
                 retriever = index.as_retriever(similarity_top_k=3)
                 nodes = await retriever.aretrieve(query)
                 if not nodes:
+                    await _emit_event("tool_search_documents", "completed", {"collection": key, "count": 0})
                     return f"No relevant information found in the {display_name} collection."
                 parts = []
                 for i, node in enumerate(nodes[:3]):
                     text = getattr(node, "text", "")
                     parts.append(f"Source {i+1}: {text[:500]}...")
+                await _emit_event("tool_search_documents", "completed", {"collection": key, "count": len(nodes)})
                 return f"{display_name} Information:\n\n" + "\n\n".join(parts)
             except Exception as e:
                 logger.error(f"Error querying {display_name} ({key}): {e}")
+                await _emit_event("tool_search_documents", "failed", {"collection": key, "error": str(e)})
                 return f"Error retrieving information from {display_name}: {str(e)}"
 
         return _fn
@@ -538,7 +583,8 @@ async def run_llamaindex_agent(
     session_id: Optional[str] = None,
     agencies: Optional[Union[str, List[str]]] = None,
     language: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None,
+    db: Optional[AsyncSession] = None
 ) -> Output:
     """
     Run the LlamaIndex agent with a message and optional chat history.
@@ -556,6 +602,15 @@ async def run_llamaindex_agent(
         Output object with structured response
     """
     logger.info(f"Running LlamaIndex agent for session {session_id} with agencies: {agencies}")
+    # Set context for events if provided
+    if db and session_id:
+        try:
+            session_id_context.set(session_id)
+            db_context.set(db)
+        except Exception:
+            pass
+    # Emit agent invocation start
+    await _emit_event("agent_invocation", "started", {"agencies": agencies if agencies is not None else "all"})
     
     # Create agent with optional agency filtering
     agent = generate_llamaindex_agent(agencies)
@@ -601,12 +656,14 @@ async def run_llamaindex_agent(
         processed_response = LlamaIndexResponseProcessor.process_response(
             response, retriever_type=retriever_type, language=language
         )
-        
+
         logger.info(f"Successfully processed LlamaIndex agent response for session {session_id}")
+        await _emit_event("agent_invocation", "completed", {"agencies": agencies if agencies is not None else "all"})
         return processed_response
-        
+
     except Exception as e:
         logger.error(f"Error running LlamaIndex agent: {e}")
+        await _emit_event("agent_invocation", "failed", {"error": str(e), "agencies": agencies if agencies is not None else "all"})
         # Return error response in expected format
         return Output(
             answer=f"I apologize, but I encountered an error while processing your request: {str(e)}",
