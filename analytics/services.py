@@ -719,6 +719,246 @@ class AnalyticsService:
         except (ZeroDivisionError, ValueError):
             return None
 
+    # ===== Usage: Data-backed replacements for demo endpoints =====
+    @staticmethod
+    async def get_system_health(db: AsyncSession, hours: int = 24) -> Dict[str, Any]:
+        """
+        System health metrics derived from chat_events over the last `hours`.
+        - Response times: use TTFA percentiles (ms) from event timelines.
+        - Error rate: error events / message_received events (percentage).
+        - Uptime approximation: percentage of 1-min buckets with any activity.
+        """
+        # Percentiles of TTFA
+        q_latency = text(
+            """
+            WITH mr AS (
+                SELECT session_id, message_id, MIN(timestamp) AS mr_ts
+                FROM chat_events
+                WHERE event_type = 'message_received'
+                  AND timestamp >= NOW() - (INTERVAL '1 hour' * :hours)
+                GROUP BY session_id, message_id
+            ), at AS (
+                SELECT session_id, message_id,
+                       MIN(timestamp) AS at_start,
+                       MAX(timestamp) AS at_end
+                FROM chat_events
+                WHERE event_type = 'agent_thinking'
+                  AND timestamp >= NOW() - (INTERVAL '1 hour' * :hours)
+                GROUP BY session_id, message_id
+            ), rg AS (
+                SELECT session_id, message_id,
+                       MIN(timestamp) AS rg_start,
+                       MAX(timestamp) AS rg_end
+                FROM chat_events
+                WHERE event_type = 'response_generation'
+                  AND timestamp >= NOW() - (INTERVAL '1 hour' * :hours)
+                GROUP BY session_id, message_id
+            ), joined AS (
+                SELECT mr.session_id, mr.message_id,
+                       EXTRACT(EPOCH FROM (COALESCE(rg.rg_end, at.at_end) - mr.mr_ts)) * 1000 AS ttfa_ms
+                FROM mr
+                LEFT JOIN at ON at.session_id = mr.session_id AND at.message_id = mr.message_id
+                LEFT JOIN rg ON rg.session_id = mr.session_id AND rg.message_id = mr.message_id
+            )
+            SELECT
+                COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ttfa_ms), 0) AS p50_ttfa_ms,
+                COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY ttfa_ms), 0) AS p95_ttfa_ms,
+                COALESCE(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY ttfa_ms), 0) AS p99_ttfa_ms
+            FROM joined
+            WHERE ttfa_ms IS NOT NULL
+            """
+        )
+        lat_res = await db.execute(q_latency, {"hours": hours})
+        lat = lat_res.mappings().first() or {}
+
+        # Error rate over window
+        q_counts = text(
+            """
+            SELECT
+                SUM(CASE WHEN event_type = 'message_received' THEN 1 ELSE 0 END)::INT AS requests,
+                SUM(CASE WHEN event_type = 'error' THEN 1 ELSE 0 END)::INT AS errors
+            FROM chat_events
+            WHERE timestamp >= NOW() - (INTERVAL '1 hour' * :hours)
+            """
+        )
+        c_res = await db.execute(q_counts, {"hours": hours})
+        counts = c_res.mappings().first() or {}
+        requests = int(counts.get("requests") or 0)
+        errors = int(counts.get("errors") or 0)
+        error_rate = round((errors / requests) * 100, 2) if requests > 0 else 0.0
+
+        # Uptime approximation: percent of minute buckets with any activity
+        q_uptime = text(
+            """
+            WITH series AS (
+                SELECT gs AS ts
+                FROM generate_series(
+                    date_trunc('minute', NOW() - (INTERVAL '1 hour' * :hours)),
+                    date_trunc('minute', NOW()),
+                    INTERVAL '1 minute'
+                ) AS gs
+            ), act AS (
+                SELECT date_trunc('minute', timestamp) AS m, COUNT(*) AS cnt
+                FROM chat_events
+                WHERE timestamp >= NOW() - (INTERVAL '1 hour' * :hours)
+                GROUP BY 1
+            )
+            SELECT
+                COUNT(*) FILTER (WHERE COALESCE(act.cnt,0) > 0) AS up,
+                COUNT(*) AS total
+            FROM series s
+            LEFT JOIN act ON act.m = s.ts
+            """
+        )
+        up_res = await db.execute(q_uptime, {"hours": hours})
+        up = up_res.mappings().first() or {}
+        up_cnt = int(up.get("up") or 0)
+        up_total = int(up.get("total") or 0)
+        uptime_pct = round((up_cnt / up_total) * 100, 2) if up_total > 0 else 100.0
+
+        # Availability label
+        if error_rate < 1.0 and uptime_pct >= 99.0:
+            availability = "healthy"
+        elif error_rate < 5.0 and uptime_pct >= 95.0:
+            availability = "warning"
+        else:
+            availability = "degraded"
+
+        return {
+            "api_response_time_p50": float(lat.get("p50_ttfa_ms") or 0.0),
+            "api_response_time_p95": float(lat.get("p95_ttfa_ms") or 0.0),
+            "api_response_time_p99": float(lat.get("p99_ttfa_ms") or 0.0),
+            "error_rate": error_rate,
+            "uptime_percentage": uptime_pct,
+            "system_availability": availability,
+        }
+
+    @staticmethod
+    async def get_hourly_traffic_series(db: AsyncSession, days: int = 7) -> List[Dict[str, Any]]:
+        """
+        Aggregate sessions and messages per UTC hour across the last `days`.
+        Returns 24 buckets ("00".."23").
+        """
+        q_sessions = text(
+            """
+            SELECT EXTRACT(HOUR FROM created_at)::INT AS h, COUNT(*)::INT AS cnt
+            FROM chats
+            WHERE created_at >= NOW() - (INTERVAL '1 day' * :days)
+            GROUP BY 1
+            """
+        )
+        q_messages = text(
+            """
+            SELECT EXTRACT(HOUR FROM timestamp)::INT AS h, COUNT(*)::INT AS cnt
+            FROM chat_messages
+            WHERE timestamp >= NOW() - (INTERVAL '1 day' * :days)
+            GROUP BY 1
+            """
+        )
+        s_map = {int(r[0]): int(r[1]) for r in (await db.execute(q_sessions, {"days": days})).all()}
+        m_map = {int(r[0]): int(r[1]) for r in (await db.execute(q_messages, {"days": days})).all()}
+        series: List[Dict[str, Any]] = []
+        for h in range(24):
+            series.append({
+                "hour": f"{h:02d}",
+                "sessions": int(s_map.get(h, 0)),
+                "messages": int(m_map.get(h, 0)),
+            })
+        return series
+
+    @staticmethod
+    async def get_response_time_trends(db: AsyncSession, days: int = 7) -> List[Dict[str, Any]]:
+        """
+        Daily TTFA percentiles for the last `days`.
+        Returns a list of {day, p50, p95, p99}.
+        """
+        q = text(
+            """
+            WITH mr AS (
+                SELECT session_id, message_id, MIN(timestamp) AS mr_ts
+                FROM chat_events
+                WHERE event_type = 'message_received'
+                  AND timestamp >= NOW() - (INTERVAL '1 day' * :days)
+                GROUP BY session_id, message_id
+            ), at AS (
+                SELECT session_id, message_id,
+                       MIN(timestamp) AS at_start,
+                       MAX(timestamp) AS at_end
+                FROM chat_events
+                WHERE event_type = 'agent_thinking'
+                  AND timestamp >= NOW() - (INTERVAL '1 day' * :days)
+                GROUP BY session_id, message_id
+            ), rg AS (
+                SELECT session_id, message_id,
+                       MIN(timestamp) AS rg_start,
+                       MAX(timestamp) AS rg_end
+                FROM chat_events
+                WHERE event_type = 'response_generation'
+                  AND timestamp >= NOW() - (INTERVAL '1 day' * :days)
+                GROUP BY session_id, message_id
+            ), joined AS (
+                SELECT DATE(mr.mr_ts) AS day,
+                       EXTRACT(EPOCH FROM (COALESCE(rg.rg_end, at.at_end) - mr.mr_ts)) * 1000 AS ttfa_ms
+                FROM mr
+                LEFT JOIN at ON at.session_id = mr.session_id AND at.message_id = mr.message_id
+                LEFT JOIN rg ON rg.session_id = mr.session_id AND rg.message_id = mr.message_id
+            )
+            SELECT day,
+                   PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ttfa_ms) AS p50,
+                   PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY ttfa_ms) AS p95,
+                   PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY ttfa_ms) AS p99
+            FROM joined
+            WHERE ttfa_ms IS NOT NULL
+            GROUP BY day
+            ORDER BY day
+            """
+        )
+        res = await db.execute(q, {"days": days})
+        return [
+            {"day": str(r[0]), "p50": float(r[1] or 0), "p95": float(r[2] or 0), "p99": float(r[3] or 0)}
+            for r in res.all()
+        ]
+
+    @staticmethod
+    async def get_error_analysis(db: AsyncSession, hours: int = 24) -> Dict[str, Any]:
+        """
+        Error analysis over the last `hours` using chat_events.
+        Returns error_rate, total_errors, and breakdown by type.
+        """
+        q_errs = text(
+            """
+            SELECT COALESCE(event_data->>'error_type', event_data->>'reason', event_type) AS t, COUNT(*)::INT AS c
+            FROM chat_events
+            WHERE event_type = 'error'
+              AND timestamp >= NOW() - (INTERVAL '1 hour' * :hours)
+            GROUP BY 1
+            ORDER BY c DESC
+            """
+        )
+        errs = await db.execute(q_errs, {"hours": hours})
+        err_rows = errs.mappings().all()
+        error_types = { (r.get("t") or "error"): int(r.get("c") or 0) for r in err_rows }
+        total_errors = sum(error_types.values())
+
+        q_req = text(
+            """
+            SELECT COUNT(*)::INT
+            FROM chat_events
+            WHERE event_type = 'message_received'
+              AND timestamp >= NOW() - (INTERVAL '1 hour' * :hours)
+            """
+        )
+        req = await db.execute(q_req, {"hours": hours})
+        requests = int(req.scalar() or 0)
+        error_rate = round((total_errors / requests) * 100, 2) if requests > 0 else 0.0
+
+        return {
+            "error_rate": error_rate,
+            "total_errors": int(total_errors),
+            "error_types": error_types,
+            "analysis_period": f"{hours} hours",
+        }
+
     # ===== New methods =====
     @staticmethod
     async def get_latency_stats(db: AsyncSession) -> Dict[str, Any]:

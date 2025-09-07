@@ -59,29 +59,15 @@ async def get_session_duration_analysis(
 @router.get(
     "/system-health",
     response_model=SystemHealth,
-    summary="System health (demo)",
-    description="API response times, error rate, and uptime. Demo values in dev.",
+    summary="System health",
+    description="API response times (TTFA P50/P95/P99), error rate, and uptime approximation over a recent window.",
 )
 async def get_system_health(
+    hours: int = Query(24, description="Hours of activity to analyze (uptime/error window)"),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Get real-time system health metrics.
-    
-    Monitors:
-    - API response times (P50, P95, P99)
-    - Error rates and uptime
-    - System availability status
-    """
-    # Placeholder - would integrate with monitoring systems
-    return SystemHealth(
-        api_response_time_p50=150.5,
-        api_response_time_p95=450.2,
-        api_response_time_p99=850.7,
-        error_rate=2.1,
-        uptime_percentage=99.8,
-        system_availability="healthy"
-    )
+    data = await AnalyticsService.get_system_health(db, hours=hours)
+    return SystemHealth(**data)
 
 @router.get(
     "/peak-hours",
@@ -140,75 +126,41 @@ async def get_capacity_metrics(
 @router.get(
     "/hourly-traffic",
     response_model=List[HourlyTrafficPoint],
-    summary="Hourly traffic (demo)",
-    description="24 UTC buckets with sessions and messages; demo shape in dev.",
+    summary="Hourly traffic",
+    description="24 UTC buckets with sessions and messages aggregated over the last N days.",
 )
 async def get_hourly_traffic(
     days: int = Query(7, description="Number of days to analyze"),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Get aggregated hourly traffic across the analysis window.
-    Returns 24 buckets with total sessions and messages per hour (UTC).
-    """
-    # Placeholder aggregation: derive from total trend shape if needed; here we return a stable demo shape
-    series = [
-        HourlyTrafficPoint(hour=f"{h:02d}", sessions=max(20, int(200 * (0.6 if 8<=h<=18 else 0.3))), messages=max(60, int(600 * (0.6 if 8<=h<=18 else 0.3))))
-        for h in range(24)
-    ]
-    return series
+    rows = await AnalyticsService.get_hourly_traffic_series(db, days=days)
+    return [HourlyTrafficPoint(**r) for r in rows]
 
 @router.get(
     "/response-times",
     response_model=List[ResponseTimesPoint],
-    summary="Response time trends (demo)",
-    description="Daily P50/P95/P99 response time points; demo series in dev.",
+    summary="Response time trends",
+    description="Daily P50/P95/P99 (TTFA) for the last N days computed from chat events.",
 )
 async def get_response_time_trends(
     days: int = Query(7, description="Number of days to analyze"),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Get response time percentile trends (P50/P95/P99) per day.
-    """
-    from datetime import date, timedelta
-    today = date.today()
-    points: List[ResponseTimesPoint] = []
-    base = [180, 450, 680]
-    for i in range(days):
-        d = today - timedelta(days=days-1-i)
-        jitter = (i % 3) * 5
-        points.append(ResponseTimesPoint(day=str(d), p50=base[0]-jitter, p95=base[1]-jitter*2, p99=base[2]-jitter*3))
-    return points
+    rows = await AnalyticsService.get_response_time_trends(db, days=days)
+    return [ResponseTimesPoint(**r) for r in rows]
 
 @router.get(
     "/errors",
     response_model=ErrorAnalysis,
-    summary="Error analysis (demo)",
-    description="Error rates, total errors, and breakdown by type.",
+    summary="Error analysis",
+    description="Error rate, total errors, and breakdown by type computed from chat events.",
 )
 async def get_error_analysis(
     hours: int = Query(24, description="Hours of error data to analyze"),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Get error analysis and monitoring data.
-    
-    Returns:
-    - Error rates by type
-    - Failed request patterns
-    - Recovery metrics
-    """
-    return ErrorAnalysis(
-        error_rate=2.1,
-        total_errors=15,
-        error_types={
-            "4xx_errors": 8,
-            "5xx_errors": 7,
-            "timeout_errors": 0,
-        },
-        analysis_period=f"{hours} hours",
-    )
+    data = await AnalyticsService.get_error_analysis(db, hours=hours)
+    return ErrorAnalysis(**data)
 
 @router.get(
     "/latency",

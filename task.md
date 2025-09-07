@@ -7,6 +7,7 @@ This plan implements the focused analytics in `requirements.md` (no business ana
 - Phase 1 schemas added in `analytics/schemas.py`.
 - Phase 2 services implemented for latency, tool usage, collections health, no‑answer, citations, and answer length.
 - Phase 3 routes added and live for usage and conversation analytics (see corrected paths below).
+- Phase P replacements: System Health, Hourly Traffic, Response Time Trends, and Errors are now data‑backed and live.
 - Remaining: per‑user metrics and user routes; unit tests; docs polish; perf/index review; final quality gates.
 
 Legend:
@@ -141,6 +142,112 @@ Legend:
 - Implement per‑user service methods (tasks 9–10) and wire `/analytics/user/top` and `/analytics/user/metrics`.
 - Add unit tests for all new endpoints (task 14) and update README with example responses (task 15).
 - Quick index review (task 16) and final quality gates including `/analytics/docs` smoke (task 17).
+
+---
+
+## Phase P — Replace Placeholder Metrics with Data-Backed Implementations
+
+This section lists concrete tasks to replace demo/placeholder endpoints using existing DB tables (chat_events, chat_messages, chats, documents, webpages, collections). Implement where feasible without external telemetry.
+
+P1) Usage → System Health (data-backed)
+- Goal: Populate P50/P95/P99 (reuse latency), error_rate, uptime approximation.
+- Data: chat_events (message_received, agent_thinking, response_generation, error)
+- Tasks:
+   - [x] Service: `get_system_health(db, hours=24)` → compute response percentiles (from existing latency CTE), error_rate = errors/requests, uptime = % of 1‑min buckets in window with any activity.
+   - [x] Router: use service (replace demo) and keep `SystemHealth` schema.
+   - [ ] Swagger: document heuristics for uptime.
+- Acceptance:
+   - [x] Percentiles ≥ 0; error_rate, uptime_percentage in [0,100]; availability derived by thresholds.
+
+P2) Usage → Hourly Traffic (data-backed)
+- Goal: 24 UTC buckets with sessions and messages across N days.
+- Data: chats.created_at, chat_messages.timestamp
+- Tasks:
+   - [x] Service: `get_hourly_traffic(db, days=7)` aggregating by extract(hour) with zero‑fill.
+   - [x] Router: call service (replace demo).
+- Acceptance:
+   - [x] 24 buckets "00".."23"; integer counts; zero for empty hours.
+
+P3) Usage → Response Time Trends (data-backed)
+- Goal: Daily P50/P95/P99 (TTFA) for last N days.
+- Data: chat_events (reuse latency join) grouped by date
+- Tasks:
+   - [x] Service: `get_response_time_trends(db, days=7)`.
+   - [x] Router: call service (replace demo).
+- Acceptance:
+   - [x] N points with p50/p95/p99 or [] when no data.
+
+P4) Usage → Errors (data-backed)
+- Goal: error_rate, total_errors, error_types breakdown.
+- Data: chat_events where event_type='error'
+- Tasks:
+   - [x] Service: `get_error_analysis(db, hours=24)` grouping by COALESCE(event_data->>'error_type', event_data->>'reason','error').
+   - [x] Router: call service (replace demo).
+- Acceptance:
+   - [x] error_rate in [0,100]; total_errors integer; error_types map present when errors>0.
+
+P5) Usage → Capacity (approximation)
+- Goal: capacity_utilization, concurrent_sessions, scaling status.
+- Data: chat_events intervals per message (received→first response start/end).
+- Tasks:
+   - [ ] Service: `get_capacity_metrics(db, hours=24, max_capacity: int)` estimating 95th percentile concurrency vs max.
+   - [ ] Router: call service (replace demo).
+   - [ ] Config: env var `MAX_CONCURRENCY_CAPACITY` with safe default.
+- Acceptance:
+   - [ ] utilization in [0,100]; concurrent_sessions ≥ 0; status derived by thresholds.
+
+P6) Conversation → Intents (heuristic)
+- Goal: Basic intent labels without external NLP.
+- Data: chat_messages (user); chat_events proximity for tool use
+- Tasks:
+   - [ ] Service: `get_intent_analysis(db, start, end, limit=20)` using ILIKE keyword patterns and tool_search_documents signals.
+   - [ ] Router: replace demo; mark heuristic in description.
+- Acceptance:
+   - [ ] Non‑empty list when data exists; success_rate proxy via citation/no‑answer.
+
+P7) Conversation → Document Retrieval (data-backed)
+- Goal: Per‑collection access_frequency and success_rate.
+- Data: chat_events where event_type='tool_search_documents'
+- Tasks:
+   - [ ] Service: `get_document_retrieval_analysis(db, start, end)` computing counts and success_rate = completed/(started+failed).
+   - [ ] Router: replace demo.
+- Acceptance:
+   - [ ] Ordered by access_frequency; success_rate in [0,100].
+
+P8) Conversation → Drop‑offs (data-backed)
+- Goal: Abandonment by turn buckets.
+- Data: chat_messages counts per chat
+- Tasks:
+   - [ ] Service: `get_drop_offs(db, start, end)` bucketing message counts (1‑2, 3‑5, 6‑10, 11‑20, 21+).
+   - [ ] Router: replace demo; optional triggers from recent error/no‑answer keywords.
+- Acceptance:
+   - [ ] DropOffPoint list populated when data exists.
+
+P9) Conversation → Sentiment Trends (data-backed)
+- Goal: Distribution of positive/neutral/negative.
+- Data: chat_messages (user) + existing `sentiment_analyzer`
+- Tasks:
+   - [ ] Service: `get_sentiment_trends(db, start, end)` aggregating analyzer outputs.
+   - [ ] Router: replace demo.
+- Acceptance:
+   - [ ] Keys sum to ~100 when messages exist.
+
+P10) Conversation → Knowledge Gaps (heuristic)
+- Goal: Topics where answers underperform.
+- Data: user messages preceding no‑answer or error; assistant citations
+- Tasks:
+   - [ ] Service: `get_knowledge_gaps(db, start, end, threshold=0.3)` with naive keyword extraction; success proxy via citations or no‑answer inverse.
+   - [ ] Router: replace demo; mark heuristic.
+- Acceptance:
+   - [ ] Topics with query_frequency>0; success_rate in [0,100].
+
+P11) Conversation → Flows average_response_time (data-backed)
+- Goal: Replace placeholder 30.0 with real average per bucket.
+- Data: chat_events; deltas from message_received → first agent_thinking/response_generation
+- Tasks:
+   - [ ] Enhance `get_conversation_turn_analysis` to compute `average_response_time`.
+- Acceptance:
+   - [ ] Non‑zero averages where events exist; buckets unchanged.
 
 
 ## Traceability Matrix (task → requirement)
