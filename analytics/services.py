@@ -873,3 +873,298 @@ class AnalyticsService:
             })
 
         return {"overall": overall, "by_collection": by_collection}
+
+    @staticmethod
+    async def get_collections_health(db: AsyncSession) -> List[Dict[str, Any]]:
+        """
+        Compute collection health across webpages and documents with freshness.
+        Returns a list of items with webpages, documents, and last_indexed_at per collection.
+        """
+        q = text(
+            """
+            WITH coll AS (
+                SELECT id AS collection_id FROM collections
+                UNION
+                SELECT DISTINCT collection_id FROM webpages WHERE collection_id IS NOT NULL
+                UNION
+                SELECT DISTINCT collection_id FROM documents WHERE collection_id IS NOT NULL
+            ), wp AS (
+                SELECT
+                    collection_id,
+                    COUNT(*)::INT AS pages,
+                    SUM(CASE WHEN status_code BETWEEN 200 AND 299 THEN 1 ELSE 0 END)::INT AS ok,
+                    SUM(CASE WHEN status_code BETWEEN 300 AND 399 THEN 1 ELSE 0 END)::INT AS redirects,
+                    SUM(CASE WHEN status_code BETWEEN 400 AND 499 THEN 1 ELSE 0 END)::INT AS client_err,
+                    SUM(CASE WHEN status_code BETWEEN 500 AND 599 THEN 1 ELSE 0 END)::INT AS server_err,
+                    SUM(CASE WHEN is_indexed THEN 1 ELSE 0 END)::INT AS indexed,
+                    MAX(indexed_at) AS wp_last_indexed
+                FROM webpages
+                GROUP BY collection_id
+            ), doc AS (
+                SELECT
+                    collection_id,
+                    COUNT(*)::INT AS doc_count,
+                    SUM(CASE WHEN is_indexed THEN 1 ELSE 0 END)::INT AS doc_indexed,
+                    SUM(CASE WHEN is_public THEN 1 ELSE 0 END)::INT AS public,
+                    COALESCE(SUM(size), 0)::BIGINT AS total_size,
+                    MAX(indexed_at) AS doc_last_indexed
+                FROM documents
+                GROUP BY collection_id
+            )
+            SELECT
+                coll.collection_id,
+                COALESCE(wp.pages, 0) AS pages,
+                COALESCE(wp.ok, 0) AS ok,
+                COALESCE(wp.redirects, 0) AS redirects,
+                COALESCE(wp.client_err, 0) AS client_err,
+                COALESCE(wp.server_err, 0) AS server_err,
+                COALESCE(wp.indexed, 0) AS wp_indexed,
+                COALESCE(doc.doc_count, 0) AS doc_count,
+                COALESCE(doc.doc_indexed, 0) AS doc_indexed,
+                COALESCE(doc.public, 0) AS public,
+                COALESCE(doc.total_size, 0) AS total_size,
+                CASE
+                  WHEN wp.wp_last_indexed IS NOT NULL AND doc.doc_last_indexed IS NOT NULL THEN GREATEST(wp.wp_last_indexed, doc.doc_last_indexed)
+                  WHEN wp.wp_last_indexed IS NOT NULL THEN wp.wp_last_indexed
+                  ELSE doc.doc_last_indexed
+                END AS last_indexed_at
+            FROM coll
+            LEFT JOIN wp ON wp.collection_id = coll.collection_id
+            LEFT JOIN doc ON doc.collection_id = coll.collection_id
+            ORDER BY coll.collection_id
+            """
+        )
+        res = await db.execute(q)
+        items: List[Dict[str, Any]] = []
+        for r in res.mappings().all():
+            items.append({
+                "collection_id": r.get("collection_id"),
+                "webpages": {
+                    "pages": int(r.get("pages") or 0),
+                    "ok": int(r.get("ok") or 0),
+                    "redirects": int(r.get("redirects") or 0),
+                    "client_err": int(r.get("client_err") or 0),
+                    "server_err": int(r.get("server_err") or 0),
+                    "indexed": int(r.get("wp_indexed") or 0),
+                },
+                "documents": {
+                    "count": int(r.get("doc_count") or 0),
+                    "indexed": int(r.get("doc_indexed") or 0),
+                    "public": int(r.get("public") or 0),
+                    "total_size": int(r.get("total_size") or 0),
+                },
+                "freshness": {
+                    "last_indexed_at": r.get("last_indexed_at")
+                }
+            })
+        return items
+
+    @staticmethod
+    async def get_no_answer_stats(db: AsyncSession, examples_limit: int = 5) -> Dict[str, Any]:
+        """
+        Estimate no-answer rate from assistant messages and error events.
+        Heuristics:
+        - Assistant messages with apology/insufficient-info phrases in content
+        - Plus error events in chat_events contribute to triggers
+        Returns percentage rate, example snippets, and top triggers.
+        """
+        # Total assistant messages
+        total_q = text(
+            """
+            SELECT COUNT(*)::INT AS total
+            FROM chat_messages
+            WHERE message_type = 'assistant'
+            """
+        )
+        total_res = await db.execute(total_q)
+        total = int((total_res.mappings().first() or {}).get("total") or 0)
+
+        # No-answer heuristic: common apology/insufficient phrases
+        noans_q = text(
+            """
+            WITH msgs AS (
+                SELECT id, chat_id, message_id,
+                       COALESCE(message_object->>'content', '') AS content
+                FROM chat_messages
+                WHERE message_type = 'assistant'
+            )
+            SELECT id, chat_id, message_id,
+                   content
+            FROM msgs
+            WHERE content ILIKE '%sorry%'
+               OR content ILIKE '%do not have%'
+               OR content ILIKE '%don''t have%'
+               OR content ILIKE '%unable to find%'
+               OR content ILIKE '%no relevant results%'
+               OR content ILIKE '%cannot answer%'
+               OR content ILIKE '%not sure%'
+            """
+        )
+        noans_res = await db.execute(noans_q)
+        noans_rows = noans_res.mappings().all()
+        noans_count = len(noans_rows)
+
+        # Error triggers from chat_events
+        err_q = text(
+            """
+            SELECT
+                COALESCE(event_data->>'reason', event_data->>'error_type', event_type) AS trigger,
+                COUNT(*)::INT AS cnt
+            FROM chat_events
+            WHERE event_type = 'error'
+            GROUP BY COALESCE(event_data->>'reason', event_data->>'error_type', event_type)
+            ORDER BY cnt DESC
+            LIMIT 10
+            """
+        )
+        err_res = await db.execute(err_q)
+        triggers = [r.get("trigger") for r in err_res.mappings().all() if r.get("trigger")]
+
+        # Build examples (limit)
+        examples: List[Dict[str, Any]] = []
+        for r in noans_rows[:examples_limit]:
+            content = r.get("content") or ""
+            snippet = content[:180]
+            # We don't have chat_id in chat_events schema; examples accept optional ids
+            examples.append({
+                "chat_id": int(r.get("chat_id") or 0),
+                "message_id": r.get("message_id"),
+                "snippet": snippet,
+            })
+
+        rate = round((noans_count / total) * 100, 2) if total > 0 else 0.0
+        return {
+            "rate": rate,
+            "examples": examples,
+            "top_triggers": triggers,
+        }
+
+    @staticmethod
+    async def get_citation_stats(db: AsyncSession) -> Dict[str, Any]:
+        """
+        Compute citation coverage and per-collection stats from assistant messages' sources.
+        Assumes assistant answers may include message_object.sources as a JSON array.
+        """
+        totals_q = text(
+            """
+            SELECT
+                COUNT(*)::INT AS total_answers,
+                SUM(CASE WHEN COALESCE(json_array_length(message_object->'sources'),0) > 0 THEN 1 ELSE 0 END)::INT AS covered_answers,
+                AVG(
+                    CASE WHEN COALESCE(json_array_length(message_object->'sources'),0) > 0
+                         THEN json_array_length(message_object->'sources')::FLOAT
+                    END
+                ) AS avg_citations
+            FROM chat_messages
+            WHERE message_type = 'assistant'
+            """
+        )
+        totals_res = await db.execute(totals_q)
+        trow = totals_res.mappings().first() or {}
+        total_answers = int(trow.get("total_answers") or 0)
+        covered_answers = int(trow.get("covered_answers") or 0)
+        avg_citations_val = trow.get("avg_citations")
+        try:
+            avg_citations = float(avg_citations_val) if avg_citations_val is not None else 0.0
+        except (TypeError, ValueError):
+            avg_citations = 0.0
+        coverage_pct = round((covered_answers / total_answers) * 100, 2) if total_answers > 0 else 0.0
+
+        by_q = text(
+            """
+            WITH am AS (
+                SELECT id, message_object
+                FROM chat_messages
+                WHERE message_type = 'assistant'
+            ), src AS (
+                SELECT am.id AS answer_id,
+                       COALESCE(
+                           elem->>'collection',
+                           elem->>'collection_id',
+                           (elem->'metadata')->>'collection',
+                           (elem->'metadata')->>'collection_id'
+                       ) AS collection_id
+                FROM am,
+                     LATERAL json_array_elements(COALESCE(am.message_object->'sources','[]'::json)) AS elem
+            ), counts AS (
+                SELECT collection_id, answer_id, COUNT(*)::INT AS cnt
+                FROM src
+                WHERE collection_id IS NOT NULL AND collection_id <> ''
+                GROUP BY collection_id, answer_id
+            )
+            SELECT collection_id,
+                   COUNT(*)::INT AS answers_with_collection,
+                   AVG(cnt)::FLOAT AS avg_citations
+            FROM counts
+            GROUP BY collection_id
+            ORDER BY answers_with_collection DESC
+            """
+        )
+        by_res = await db.execute(by_q)
+        by_collection: List[Dict[str, Any]] = []
+        for r in by_res.mappings().all():
+            coll = r.get("collection_id")
+            answers_with_collection = int(r.get("answers_with_collection") or 0)
+            avg_coll_val = r.get("avg_citations")
+            try:
+                avg_coll = float(avg_coll_val) if avg_coll_val is not None else 0.0
+            except (TypeError, ValueError):
+                avg_coll = 0.0
+            coll_coverage = round((answers_with_collection / total_answers) * 100, 2) if total_answers > 0 else 0.0
+            by_collection.append({
+                "collection_id": coll,
+                "coverage_pct": coll_coverage,
+                "avg_citations": avg_coll,
+            })
+
+        return {
+            "coverage_pct": coverage_pct,
+            "avg_citations": avg_citations,
+            "by_collection": by_collection,
+        }
+
+    @staticmethod
+    async def get_answer_length_stats(db: AsyncSession) -> Dict[str, Any]:
+        """
+        Compute answer length stats (words) for assistant messages.
+        Returns avg, median, and distribution buckets.
+        """
+        q = text(
+            r"""
+            WITH words AS (
+                SELECT COALESCE(
+                         array_length(regexp_split_to_array(COALESCE(message_object->>'content',''), E'\s+'), 1),
+                         0
+                     ) AS words
+                FROM chat_messages
+                WHERE message_type = 'assistant'
+            )
+            SELECT
+                AVG(words)::FLOAT AS avg_words,
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY words) AS median_words,
+                COUNT(*)::INT AS total,
+                SUM(CASE WHEN words <= 20 THEN 1 ELSE 0 END)::INT AS b1,
+                SUM(CASE WHEN words BETWEEN 21 AND 50 THEN 1 ELSE 0 END)::INT AS b2,
+                SUM(CASE WHEN words BETWEEN 51 AND 100 THEN 1 ELSE 0 END)::INT AS b3,
+                SUM(CASE WHEN words BETWEEN 101 AND 200 THEN 1 ELSE 0 END)::INT AS b4,
+                SUM(CASE WHEN words > 200 THEN 1 ELSE 0 END)::INT AS b5
+            FROM words
+            """
+        )
+        res = await db.execute(q)
+        row = res.mappings().first() or {}
+        total = int(row.get("total") or 0)
+        def pct(n: int) -> float:
+            return round((n / total) * 100, 2) if total > 0 else 0.0
+        distribution = [
+            {"bucket": "0-20", "count": int(row.get("b1") or 0), "percentage": pct(int(row.get("b1") or 0))},
+            {"bucket": "21-50", "count": int(row.get("b2") or 0), "percentage": pct(int(row.get("b2") or 0))},
+            {"bucket": "51-100", "count": int(row.get("b3") or 0), "percentage": pct(int(row.get("b3") or 0))},
+            {"bucket": "101-200", "count": int(row.get("b4") or 0), "percentage": pct(int(row.get("b4") or 0))},
+            {"bucket": "200+", "count": int(row.get("b5") or 0), "percentage": pct(int(row.get("b5") or 0))},
+        ]
+        return {
+            "avg_words": float(row.get("avg_words") or 0.0),
+            "median_words": float(row.get("median_words") or 0.0),
+            "distribution": distribution,
+        }

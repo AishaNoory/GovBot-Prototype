@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..schemas import TrafficMetrics, SessionDuration, SystemHealth, PeakHoursResponse, ErrorAnalysis, HourlyTrafficPoint, ResponseTimesPoint, CapacityMetrics, LatencyStats, ToolUsageResponse
+from ..schemas import TrafficMetrics, SessionDuration, SystemHealth, PeakHoursResponse, ErrorAnalysis, HourlyTrafficPoint, ResponseTimesPoint, CapacityMetrics, LatencyStats, ToolUsageResponse, CollectionHealthItem
 from ..services import AnalyticsService
 
 router = APIRouter()
@@ -183,3 +183,10 @@ async def get_tool_usage(
 ):
     data = await AnalyticsService.get_tool_usage(db)
     return ToolUsageResponse(**data)
+
+@router.get("/collections-health", response_model=List[CollectionHealthItem], summary="Collections health", description="Webpages/documents counts and indexing freshness per collection.")
+async def get_collections_health(
+    db: AsyncSession = Depends(get_db)
+):
+    items = await AnalyticsService.get_collections_health(db)
+    return [CollectionHealthItem(**i) for i in items]

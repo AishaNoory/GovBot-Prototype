@@ -18,6 +18,9 @@ from ..schemas import (
     ConversationSummary,
     DropOffPoint,
     KnowledgeGap,
+    NoAnswerStats,
+    CitationStats,
+    AnswerLengthStats,
 )
 from ..services import AnalyticsService
 
@@ -257,3 +260,31 @@ async def get_knowledge_gaps(
             "Create detailed business permit guides",
         ],
     )
+
+@router.get("/no-answer", response_model=NoAnswerStats)
+async def get_no_answer_stats(
+    examples: int = Query(5, description="Number of example snippets to include"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Estimate no-answer rate based on assistant message phrasing and error events.
+    Returns percentage rate, example snippets, and top triggers.
+    """
+    data = await AnalyticsService.get_no_answer_stats(db, examples_limit=examples)
+    return NoAnswerStats(**data)
+
+@router.get("/citations", response_model=CitationStats)
+async def get_citation_stats(
+    db: AsyncSession = Depends(get_db)
+):
+    """Citation coverage (overall and per-collection) derived from assistant message sources."""
+    data = await AnalyticsService.get_citation_stats(db)
+    return CitationStats(**data)
+
+@router.get("/answer-length", response_model=AnswerLengthStats)
+async def get_answer_length_stats(
+    db: AsyncSession = Depends(get_db)
+):
+    """Answer length distribution and central tendencies for assistant messages."""
+    data = await AnalyticsService.get_answer_length_stats(db)
+    return AnswerLengthStats(**data)
