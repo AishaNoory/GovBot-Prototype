@@ -19,7 +19,7 @@ async def start():
         ).send()
     
     await cl.Message(
-        content="Welcome to GovStack Demo! How can I help you today?"
+        content="Welcome to GovBot! How can I help you today?"
     ).send()
 
 
