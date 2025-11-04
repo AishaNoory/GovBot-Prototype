@@ -17,8 +17,9 @@ export function DashboardLayout({ children, activeView, onViewChange }: Dashboar
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar activeView={activeView} onViewChange={onViewChange} dynamicBgColor={dynamicBgColor} />
       <main className="flex-1 overflow-hidden lg:ml-64">
-        {typeof children === "function" ? children({ onColorDetected: setDynamicBgColor }) : children}
-      </main>
+               {/* {typeof children === "function" ? children({ onColorDetected: setDynamicBgColor }) : children} */}
+        {children}
+        </main>
     </div>
   )
 }
