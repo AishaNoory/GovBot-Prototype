@@ -1,3 +1,0 @@
-"""
-Analytics routers package.
-"""
